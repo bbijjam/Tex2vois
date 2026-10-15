@@ -27,6 +27,10 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bEqs?\.\s?(?=\d)"), "Equation "),
     (re.compile(r"\bSec(?:t)?\.\s?(?=\d)"), "Section "),
     (re.compile(r"\bpp?\.\s?(?=\d)"), "page "),
+    # exponents recovered from superscripts: N^3, 10^4
+    (re.compile(r"\^2\b"), " squared"),
+    (re.compile(r"\^3\b"), " cubed"),
+    (re.compile(r"\^(-?\d+)"), r" to the power \1"),
     # tidy
     (re.compile(r"\(\s*\)"), ""),
     (re.compile(r"\s+([,.;:!?])"), r"\1"),
