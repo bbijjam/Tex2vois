@@ -121,6 +121,7 @@ def speak(
         for para in ch.paras:
             cues.append({"id": para.id, "source": para.source, "chapter": ch.title, "start": round(offset / SAMPLE_RATE, 2)})
             for sentence in split_sentences(para.text):
+                say(start + (0.95 - start) * done / total, f"Speaking: {ch.title}")  # also a stop point
                 parts += [tts.speak(sentence, voice, speed), silence(PAUSE_SENTENCE)]
             parts.append(silence(PAUSE_PARAGRAPH))
             offset = chapter_start + sum(len(x) for x in parts)

@@ -17,6 +17,11 @@ from tex2vois.llm import LLM, LLMError
 from tex2vois.tts import DEFAULT_VOICE, VOICES, Synthesizer
 
 synth = Synthesizer()  # loaded once, shared across requests
+STOP_REQUESTED: set[str] = set()  # session ids whose user pressed Stop
+
+
+class Stopped(Exception):
+    pass
 OUT_DIR = Path(tempfile.gettempdir()) / "tex2vois"
 PREVIEW_TEXT = "Hi! I'll be reading for you today. Sit back and enjoy."
 MODE_LABELS = {
@@ -41,7 +46,14 @@ def preview(voice: str, speed: float):
     return 24_000, synth.speak(PREVIEW_TEXT, voice, speed)
 
 
-def _run(source, kind, mode, voice, speed, rewrite, fmt, max_pages, progress):
+def _run(source, kind, mode, voice, speed, rewrite, fmt, max_pages, progress, session):
+    STOP_REQUESTED.discard(session)
+
+    def report_progress(fraction, message):
+        if session in STOP_REQUESTED:
+            raise Stopped  # checked between sentences, so work ends within seconds
+        progress(fraction, desc=message)
+
     llm = _llm() if (rewrite or mode != "full") else None
     if rewrite and llm is None:
         raise gr.Error("LLM rewrite needs OPENROUTER_API_KEY in .env, or a running Ollama.")
@@ -50,25 +62,34 @@ def _run(source, kind, mode, voice, speed, rewrite, fmt, max_pages, progress):
     try:
         report = pipeline.convert(
             source, out, kind=kind, mode=mode, voice=voice, speed=speed, use_llm=rewrite, llm=llm,
-            max_pages=int(max_pages) or None, synthesizer=synth, progress=lambda f, m: progress(f, desc=m),
+            max_pages=int(max_pages) or None, synthesizer=synth, progress=report_progress,
         )
+    except Stopped:
+        raise gr.Error("Stopped.", title="Stopped")
     except (ValueError, RuntimeError) as e:
         raise gr.Error(str(e))
+    finally:
+        STOP_REQUESTED.discard(session)
     notes = "".join(f"\n> ⚠️ {n}" for n in report.script.notes)
     stats = f"```\n{report.summary()}\n```{notes}"
     return str(report.output), str(report.output), stats, report.script.to_markdown()
 
 
-def run_article(text, voice, speed, rewrite, fmt, progress=gr.Progress()):
+def run_article(text, voice, speed, rewrite, fmt, request: gr.Request, progress=gr.Progress()):
     if not text or not text.strip():
         raise gr.Error("Paste some text first.")
-    return _run(text, "article", "full", voice, speed, rewrite, fmt, 0, progress)
+    return _run(text, "article", "full", voice, speed, rewrite, fmt, 0, progress, request.session_hash)
 
 
-def run_paper(pdf, mode_label, voice, speed, rewrite, fmt, max_pages, progress=gr.Progress()):
+def run_paper(pdf, mode_label, voice, speed, rewrite, fmt, max_pages, request: gr.Request, progress=gr.Progress()):
     if pdf is None:
         raise gr.Error("Upload a PDF first.")
-    return _run(Path(pdf), "paper", MODE_LABELS[mode_label], voice, speed, rewrite, fmt, max_pages, progress)
+    return _run(Path(pdf), "paper", MODE_LABELS[mode_label], voice, speed, rewrite, fmt, max_pages, progress, request.session_hash)
+
+
+def stop(request: gr.Request):
+    STOP_REQUESTED.add(request.session_hash)
+    gr.Info("Stopping…")
 
 
 def outputs():
@@ -98,9 +119,12 @@ with gr.Blocks(title="Tex2vois") as demo:
             with gr.Column():
                 text = gr.Textbox(label="Paste an article", lines=14, placeholder="Paste any text. Use '# Heading' lines for chapters.")
                 a_rewrite = gr.Checkbox(label="Smooth for listening with an AI model (optional, fact-checked)")
-                a_go = gr.Button("Read it to me", variant="primary")
+                with gr.Row():
+                    a_go = gr.Button("Read it to me", variant="primary")
+                    a_stop = gr.Button("Stop", variant="stop")
             a_out = outputs()
-        a_go.click(run_article, [text, voice, speed, a_rewrite, fmt], a_out)
+        a_job = a_go.click(run_article, [text, voice, speed, a_rewrite, fmt], a_out)
+        a_stop.click(stop, None, None, cancels=[a_job])
 
     with gr.Tab("Research paper"):
         with gr.Row():
@@ -109,11 +133,14 @@ with gr.Blocks(title="Tex2vois") as demo:
                 mode = gr.Radio(list(MODE_LABELS), value="Summary (about 2 minutes)", label="What to listen to")
                 p_rewrite = gr.Checkbox(label="Smooth equations and symbols with an AI model (slower, fact-checked)")
                 max_pages = gr.Number(value=0, precision=0, label="Only the first N pages (0 = all)")
-                p_go = gr.Button("Read it to me", variant="primary")
+                with gr.Row():
+                    p_go = gr.Button("Read it to me", variant="primary")
+                    p_stop = gr.Button("Stop", variant="stop")
                 gr.Markdown("Summary and skim use a free AI model via OpenRouter (or local Ollama). "
                             "Every number and gene name it says is checked against the paper; if the check fails, you hear the abstract instead.")
             p_out = outputs()
-        p_go.click(run_paper, [pdf, mode, voice, speed, p_rewrite, fmt, max_pages], p_out)
+        p_job = p_go.click(run_paper, [pdf, mode, voice, speed, p_rewrite, fmt, max_pages], p_out)
+        p_stop.click(stop, None, None, cancels=[p_job])
 
     with gr.Tab("Book (coming soon)"):
         gr.Markdown("EPUB and PDF books with chapter-by-chapter generation that can pause and resume. Next on the roadmap.")
