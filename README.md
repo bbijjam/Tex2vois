@@ -19,9 +19,10 @@ The first setup downloads about 1.5 GB (the voice model and its libraries) and t
 your connection. After that, start the app any time with `./run.sh` from the `Tex2vois` folder and open
 **http://127.0.0.1:7860**. Press `Ctrl+C` in the terminal to stop it.
 
-What `setup.sh` does: installs `ffmpeg` and `espeak-ng` (with Homebrew on macOS, or tells you the `apt` command on
-Linux), installs [uv](https://docs.astral.sh/uv/) if needed, and creates a Python 3.11 environment in `.venv/`.
-Nothing is installed system-wide except those two tools and uv. On Windows, use WSL (Ubuntu) and run the same command.
+What `setup.sh` does: installs [uv](https://docs.astral.sh/uv/) if needed (into `~/.local/bin`) and creates a
+Python 3.11 environment in `.venv/` with everything Tex2vois needs, including its own copy of ffmpeg. No Homebrew and
+no administrator password are needed, and nothing is installed system-wide. On Windows, use WSL (Ubuntu) and run the
+same command.
 
 ## What you can do
 
