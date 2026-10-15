@@ -14,3 +14,6 @@ output/
 
 # secrets
 .env
+
+# your own theme pictures (may be copyrighted; never published)
+local_art/

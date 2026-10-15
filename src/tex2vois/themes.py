@@ -11,6 +11,7 @@ The page's <html> gets the class `t2v-theme-<key>`; Gradio puts `.dark` on <body
 from __future__ import annotations
 
 import html
+import re
 
 KEYS = ("page", "surface", "surface_2", "border", "text", "muted", "brand", "brand_text", "brand_muted",
         "stage", "stage_text", "stage_muted", "stage_track", "mark", "mark_text", "para",
@@ -95,8 +96,14 @@ PATTERNS = {
     "solo-leveling": "linear-gradient(#6ea8ff1f 1px, transparent 1px) 0 0 / 26px 26px, linear-gradient(90deg, #6ea8ff1f 1px, transparent 1px) 0 0 / 26px 26px",
     "hunter-x-hunter": "repeating-linear-gradient(135deg, #8ce99a1c 0 2px, transparent 2px 17px)",
 }
-SOFT_PATTERNS = {k: v.replace("16", "0c").replace("24", "12").replace("10 0", "08 0").replace("1a", "0e").replace("1f", "10").replace("1c", "0e")
-                 for k, v in PATTERNS.items()}
+
+
+def _soften(pattern: str) -> str:
+    """Halve the alpha of every #rrggbbaa colour (and only those), for the quieter player-card pattern."""
+    return re.sub(r"#([0-9a-fA-F]{6})([0-9a-fA-F]{2})\b", lambda m: f"#{m.group(1)}{int(m.group(2), 16) // 2:02x}", pattern)
+
+
+SOFT_PATTERNS = {k: _soften(v) for k, v in PATTERNS.items()}
 
 
 def _vars(c: dict, dark: bool) -> str:
@@ -209,6 +216,7 @@ JS = r"""
   const applyTheme = name => {
     document.documentElement.className = document.documentElement.className.replace(/\bt2v-theme-\S+/g, '').trim();
     if (name && name !== 'classic') document.documentElement.classList.add('t2v-theme-' + name);
+    document.documentElement.classList.toggle('t2v-has-scene', !!name && name !== 'classic');
     document.querySelectorAll('[data-t2v-theme]').forEach(s => { s.value = name || 'classic'; });
   };
   let savedTheme = 'classic';

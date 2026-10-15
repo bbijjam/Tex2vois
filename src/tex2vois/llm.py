@@ -1,6 +1,6 @@
 """One small client for any OpenAI-compatible chat endpoint: OpenRouter or Ollama.
 
-Provider is chosen by TEX2VOIS_LLM (openrouter | ollama | auto). "auto" uses
+Provider is chosen by TEX2VOIS_LLM (openrouter | ollama | auto | off). "auto" uses
 OpenRouter when OPENROUTER_API_KEY is set, else a local Ollama.
 
 OpenRouter is restricted to free (":free") models unless TEX2VOIS_ALLOW_PAID=1,
@@ -71,6 +71,8 @@ class LLM:
         load_dotenv()
         key = os.environ.get("OPENROUTER_API_KEY") or None
         provider = (provider or os.environ.get("TEX2VOIS_LLM") or "auto").lower()
+        if provider in ("off", "none"):
+            raise LLMError("AI features are switched off (TEX2VOIS_LLM=off).")
         if provider == "auto":
             provider = "openrouter" if key else "ollama"
         override = model or os.environ.get("TEX2VOIS_MODELS")

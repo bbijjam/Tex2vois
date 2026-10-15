@@ -48,7 +48,8 @@ CSS = """
 .t2v-player { display: flex; flex-direction: column; gap: 0; border-radius: 14px; overflow: hidden;
   border: 1px solid var(--t2v-border); background: var(--t2v-surface); box-shadow: 0 10px 30px rgba(20, 24, 22, .10); }
 .t2v-player audio { display: none; }
-.t2v-stage { background: var(--t2v-pattern-soft, none), var(--t2v-stage); color: var(--t2v-stage-text); padding: 18px 20px 16px; }
+.t2v-stage { background-color: var(--t2v-stage); background-image: var(--t2v-pattern-soft, none);
+  color: var(--t2v-stage-text); padding: 18px 20px 16px; }
 /* Gradio's light theme colours text inside HTML blocks; keep the dark card's text light. */
 .t2v-stage .t2v-np-title, .t2v-stage .t2v-ctl, .t2v-stage .t2v-rate, .t2v-stage b, .t2v-stage strong { color: var(--t2v-stage-text) !important; }
 .t2v-stage .t2v-np-chapter, .t2v-stage .t2v-times, .t2v-stage .t2v-times span { color: var(--t2v-stage-muted) !important; }
@@ -247,6 +248,30 @@ JS = r"""
     audio.play();
   });
 
+  // ---- motion helpers: click ripple, reveal-on-scroll, a flash after an action ----
+  const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  document.addEventListener('pointerdown', e => {
+    const btn = e.target.closest && e.target.closest('button, .t2v-link-btn');
+    if (!btn || reduceMotion() || btn.matches('[role="tab"]')) return;
+    const r = btn.getBoundingClientRect();
+    const dot = document.createElement('span');
+    dot.className = 't2v-ripple';
+    dot.style.left = (e.clientX - r.left) + 'px'; dot.style.top = (e.clientY - r.top) + 'px';
+    btn.classList.add('t2v-rippling'); btn.appendChild(dot);
+    setTimeout(() => dot.remove(), 650);
+  });
+  const revealer = 'IntersectionObserver' in window ? new IntersectionObserver(entries => entries.forEach(en => {
+    if (en.isIntersecting) { en.target.classList.add('t2v-in'); revealer.unobserve(en.target); }
+  }), { threshold: 0.08 }) : null;
+  new MutationObserver(() => {
+    if (!revealer) return;
+    document.querySelectorAll('.t2v-triage:not(.t2v-reveal)').forEach(el => {
+      el.classList.add('t2v-reveal');
+      revealer.observe(el);
+    });
+  }).observe(document.documentElement, { childList: true, subtree: true });
+  window.t2vFlash = el => { if (!el || reduceMotion()) return; el.classList.remove('t2v-flash'); void el.offsetWidth; el.classList.add('t2v-flash'); };
+
   // ---- notes: kept in this browser (localStorage), downloadable as Markdown ----
   const NOTES_KEY = 't2v-notes';
   const allBoxes = () => [...document.querySelectorAll('.t2v-notes-text')];
@@ -271,7 +296,8 @@ JS = r"""
 
   const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   const activePlayer = () => {
-    const all = [...document.querySelectorAll('.t2v-player')].filter(p => p.offsetParent !== null);  // visible tab only
+    // players that have audio (not the "nothing playing yet" card) on the visible tab
+    const all = [...document.querySelectorAll('.t2v-player')].filter(p => p.offsetParent !== null && p.querySelector('audio'));
     return all.find(p => !p.querySelector('audio').paused) || all[all.length - 1];
   };
 
@@ -296,6 +322,7 @@ JS = r"""
       box.focus();
       store.set(box.value);
       syncAll(box.value, box);
+      window.t2vFlash && window.t2vFlash(box);
     }
     if (btn.dataset.t2v === 'download') {
       const p = activePlayer();
@@ -363,7 +390,7 @@ def render(audio_url: str, captions: list[dict], title: str = "") -> str:
         f'<div class="t2v-player">'
         f'<audio preload="metadata" src="{html.escape(audio_url, quote=True)}" aria-label="{label}"></audio>'
         f'<div class="t2v-stage">'
-        f'<div class="t2v-np-label">Now playing</div>'
+        f'<div class="t2v-np-label">Now playing<span class="t2v-eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span></div>'
         f'<div class="t2v-np-title">{label}</div>'
         f'<div class="t2v-np-chapter">{first_chapter}</div>'
         f'<div class="t2v-controls">'

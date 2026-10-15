@@ -15,7 +15,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from tex2vois import assistant, book, pipeline, player, themes, triage
+from tex2vois import assistant, book, pipeline, player, scenes, themes, triage
 from tex2vois.llm import LLM, LLMError
 from tex2vois.tts import DEFAULT_VOICE, Synthesizer
 
@@ -160,6 +160,7 @@ def triage_prompt(pdf, focus, context, use_context):
 COPY_PLAIN_JS = r'''(prompt) => {
   if (!prompt) return 'Add a paper first.';
   navigator.clipboard.writeText(prompt);
+  setTimeout(() => document.querySelectorAll('.t2v-copy-status').forEach(el => window.t2vFlash && window.t2vFlash(el)), 60);
   return 'Copied. Open Claude or ChatGPT, paste the instructions, and attach the PDF.';
 }'''
 COPY_FULL_JS = r'''(prompt, text) => {
@@ -168,6 +169,7 @@ COPY_FULL_JS = r'''(prompt, text) => {
   const full = prompt.replace(/the attached (research )?paper/, (m, r) => 'the ' + (r || '') + 'paper text included below')
     + '\n\nPaper text:\n' + fence + '\n' + text + '\n' + fence;
   navigator.clipboard.writeText(full);
+  setTimeout(() => document.querySelectorAll('.t2v-copy-status').forEach(el => window.t2vFlash && window.t2vFlash(el)), 60);
   return 'Copied, including the paper. Open Claude or ChatGPT and paste. No need to attach anything.';
 }'''
 TRIAGE_INTRO = """
@@ -289,7 +291,7 @@ DEEP_INTRO = """
 
 def stop(request: gr.Request):
     STOP_REQUESTED.add(request.session_hash)
-    gr.Info("Stopping…")
+    gr.Info("Stopped. Nothing was saved, and you can start again whenever you like.", title="Stopped")
 
 
 # ---------------------------------------------------------------- books
@@ -469,32 +471,107 @@ footer { opacity: .5; }
 :root { --t2v-bg-veil: rgba(243, 241, 236, .80); }
 body.dark { --t2v-bg-veil: rgba(10, 10, 12, .74); }
 html.t2v-has-bg body { background: linear-gradient(var(--t2v-bg-veil), var(--t2v-bg-veil)), var(--t2v-bg-image) center / cover fixed no-repeat !important; }
-/* text that normally sits on the page gets its own backing when a picture is behind it */
-html.t2v-has-bg .t2v-tabs > .tab-wrapper { background: var(--t2v-surface); border: 1px solid var(--t2v-border); border-radius: 12px; padding: 4px; }
-html.t2v-has-bg .t2v-help, html.t2v-has-bg .t2v-about, html.t2v-has-bg .t2v-status {
+/* a theme scene: lighter veil so the illustration shows */
+:root { --t2v-scene-veil: rgba(255, 255, 255, .42); }
+body.dark { --t2v-scene-veil: rgba(0, 0, 0, .38); }
+/* text that normally sits on the page gets its own backing when a picture or scene is behind it */
+:is(html.t2v-has-bg, html.t2v-has-scene) .t2v-tabs > .tab-wrapper { background: var(--t2v-surface); border: 1px solid var(--t2v-border); border-radius: 12px; padding: 4px; }
+:is(html.t2v-has-bg, html.t2v-has-scene) .t2v-help, :is(html.t2v-has-bg, html.t2v-has-scene) .t2v-about,
+:is(html.t2v-has-bg, html.t2v-has-scene) .t2v-status {
   background: var(--t2v-surface); border: 1px solid var(--t2v-border); border-radius: 10px; padding: 8px 12px !important; }
-html.t2v-has-bg gradio-app, html.t2v-has-bg .gradio-container, html.t2v-has-bg .main,
-html.t2v-has-bg .wrap, html.t2v-has-bg .contain { background: transparent !important; }
+.t2v-about:not(:has(p)), .t2v-status:not(:has(p)) { display: none !important; }  /* no empty boxes */
+:is(html.t2v-has-bg, html.t2v-has-scene) :is(gradio-app, .gradio-container, .main, .wrap, .contain) { background: transparent !important; }
 
-/* ---------- gentle motion ---------- */
-@keyframes t2v-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-@keyframes t2v-pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--t2v-mode-on-stage) 55%, transparent); }
-                       50% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--t2v-mode-on-stage) 0%, transparent); } }
-.t2v-header, .t2v-intro, .t2v-player, .t2v-notes, .t2v-triage { animation: t2v-rise .45s ease-out both; }
-.t2v-intro { animation-delay: .05s; } .t2v-player { animation-delay: .1s; } .t2v-notes { animation-delay: .15s; }
+/* ---------- motion ---------- */
+@keyframes t2v-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes t2v-pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--t2v-mode-on-stage) 60%, transparent); }
+                       50% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--t2v-mode-on-stage) 0%, transparent); } }
+@keyframes t2v-eq { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+@keyframes t2v-shimmer { from { background-position: -400px 0; } to { background-position: 400px 0; } }
+@keyframes t2v-glow { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 10px 1px var(--t2v-mode-on-stage); } }
+@keyframes t2v-sweep { from { background-size: 0% 100%; } to { background-size: 100% 100%; } }
+@keyframes t2v-flash { 0% { background: var(--t2v-mode-soft); } 100% { background: transparent; } }
+@keyframes t2v-ripple { to { transform: scale(4); opacity: 0; } }
+
+/* entrances. Rule: never leave a transform on anything that contains a dropdown. Gradio places
+   dropdown lists relative to the window, and a transformed ancestor would move them out of place
+   (behind other content). So: fill-mode "backwards" only, and opacity-only fades for containers. */
+@keyframes t2v-fade { from { opacity: 0; } to { opacity: 1; } }
+.t2v-header, .t2v-intro, .t2v-player, .t2v-notes { animation: t2v-rise .5s cubic-bezier(.2, .7, .2, 1) backwards; }
+.t2v-settings { animation: t2v-fade .5s ease-out .06s backwards; position: relative; z-index: 30; }
+.t2v-intro { animation-delay: .1s; } .t2v-player { animation-delay: .16s; } .t2v-notes { animation-delay: .22s; }
+.tabitem { animation: t2v-fade .35s ease-out backwards; }
+/* an open dropdown always sits above neighbouring cards */
+.block:has(ul.option-list), .block:focus-within:has([role="combobox"]) { position: relative; z-index: 40 !important; }
+.t2v-reveal { opacity: 0; transition: opacity .7s ease; }  /* opacity only: these panels contain inputs */
+.t2v-reveal.t2v-in { opacity: 1; }
+
+/* hover: a visible lift with a soft shadow on every button and card */
+button, .t2v-link-btn, .t2v-icon-btn, .t2v-bg-pick, .t2v-bg-clear, .t2v-ctl, .t2v-rate {
+  transition: transform .18s ease, box-shadow .18s ease, background .18s ease, border-color .18s ease, filter .18s ease !important; }
+button:not([role="tab"]):not(:disabled):hover, .t2v-link-btn:hover, .t2v-icon-btn:hover, .t2v-bg-pick:hover, .t2v-bg-clear:hover {
+  transform: translateY(-2px) !important; box-shadow: 0 6px 16px rgba(20, 20, 20, .16) !important; }
+.t2v-ctl:hover, .t2v-rate:hover { transform: translateY(-2px) scale(1.06) !important; }
+button:not(:disabled):active, .t2v-ctl:active { transform: translateY(0) scale(.96) !important; box-shadow: none !important; }
+.t2v-intro, .t2v-notes, .t2v-triage { transition: box-shadow .25s ease, border-color .25s ease; }
+.t2v-intro:hover, .t2v-notes:hover, .t2v-triage:hover { box-shadow: 0 10px 26px rgba(20, 20, 20, .12); }
+button[role="tab"] { transition: background .2s ease, color .2s ease, box-shadow .2s ease !important; }
+
+/* click ripple (added by the page script) */
+.t2v-rippling { position: relative; overflow: hidden; }
+.t2v-ripple { position: absolute; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; pointer-events: none;
+  background: currentColor; opacity: .25; transform: scale(0); animation: t2v-ripple .6s ease-out forwards; }
+
+/* the player while audio plays */
+.t2v-eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 11px; margin-left: 8px; vertical-align: -1px; }
+.t2v-eq i { width: 3px; height: 100%; border-radius: 1px; background: var(--t2v-mode-on-stage); transform: scaleY(.3); transform-origin: bottom; }
+.t2v-player.t2v-playing .t2v-eq i { animation: t2v-eq .9s ease-in-out infinite; }
+.t2v-player.t2v-playing .t2v-eq i:nth-child(2) { animation-delay: .15s; } .t2v-player.t2v-playing .t2v-eq i:nth-child(3) { animation-delay: .3s; }
+.t2v-player.t2v-playing .t2v-eq i:nth-child(4) { animation-delay: .45s; }
 .t2v-player.t2v-playing .t2v-ctl.t2v-play { animation: t2v-pulse 2.2s ease-in-out infinite; }
-.t2v-ctl, .t2v-rate, .t2v-link-btn, .t2v-icon-btn, .t2v-bg-pick, .t2v-bg-clear, button.primary, button.secondary {
-  transition: transform .15s ease, background .15s ease, border-color .15s ease, filter .15s ease; }
-.t2v-ctl:hover, .t2v-link-btn:hover, .t2v-icon-btn:hover, button.primary:hover { transform: translateY(-1px); }
-.t2v-ctl:active, button.primary:active { transform: translateY(0) scale(.97); }
+.t2v-player.t2v-playing .t2v-fill { animation: t2v-glow 2.2s ease-in-out infinite; }
 .t2v-fill { transition: width .25s linear; }
-.t2v-captions .t2v-s { transition: background .3s ease, box-shadow .3s ease, color .3s ease; }
-.tabitem { animation: t2v-rise .3s ease-out both; }
+.t2v-captions .t2v-s.t2v-on { background-image: linear-gradient(var(--t2v-mark), var(--t2v-mark)); background-repeat: no-repeat;
+  animation: t2v-sweep .45s ease-out both; }
+.t2v-captions p { transition: background .35s ease, opacity .35s ease; }
+
+/* while audio is being prepared: a shimmer on the player card */
+.pending .t2v-empty-player .t2v-stage { background-image: linear-gradient(100deg, transparent 20%, #ffffff1f 50%, transparent 80%), var(--t2v-pattern-soft, none) !important;
+  background-size: 400px 100%, auto; animation: t2v-shimmer 1.4s linear infinite; }
+.pending .t2v-empty-player .t2v-np-title { font-size: 0 !important; }
+.pending .t2v-empty-player .t2v-np-title::after { content: "Preparing your audio"; font-size: 1.25rem; }
+.pending .t2v-empty-player .t2v-np-chapter { visibility: hidden; }
+
+/* Gradio's progress indicator, restyled to match the player (it shows only on the player now) */
+.html-container.pending:has(.t2v-empty-player) { opacity: 1 !important; }   /* the shimmer already says "working" */
+.pending .t2v-empty-player { min-height: 200px; }
+.block:has(.t2v-empty-player) > .wrap.full:not(.hide) {
+  inset: auto 18px 18px 18px !important; height: auto !important; padding: 14px 16px !important; border-radius: 12px !important;
+  background: color-mix(in srgb, var(--t2v-stage) 82%, #000) !important; border: 1px solid #ffffff1f;
+  color: var(--t2v-stage-text) !important; font-family: 'IBM Plex Sans', system-ui, sans-serif !important;
+  display: flex !important; flex-direction: column; align-items: stretch !important; gap: 8px; }
+.wrap.full .progress-level, .wrap.full .progress-level-inner { font-family: 'IBM Plex Sans', system-ui, sans-serif !important;
+  color: var(--t2v-stage-text) !important; font-size: .92rem !important; font-weight: 500; text-align: left; width: 100%; }
+.wrap.full .progress-bar-wrap { width: 100% !important; background: var(--t2v-stage-track) !important; border: none !important;
+  border-radius: 999px !important; height: 8px !important; overflow: hidden; margin: 0 !important; }
+.wrap.full .progress-bar { background: var(--t2v-mode-on-stage) !important; border-radius: 999px !important; transition: width .3s ease; }
+.wrap.full .progress-text, .wrap.full .meta-text, .wrap.full .meta-text-center, .wrap.full .timer {
+  position: static !important; font-family: 'IBM Plex Sans', system-ui, sans-serif !important; color: var(--t2v-stage-muted) !important;
+  font-size: .8rem !important; text-align: right; }
+.wrap.full .eta-bar { display: none !important; }
+
+/* feedback after an action */
+.t2v-flash { animation: t2v-flash .9s ease-out; border-radius: 8px; }
+
+/* theme changes fade instead of snapping */
+body, .t2v-header, .t2v-stage, .t2v-intro, .t2v-notes, .t2v-triage, .t2v-settings, button.primary, .t2v-captions {
+  transition: background-color .45s ease, color .45s ease, border-color .45s ease; }
+
 @media (prefers-reduced-motion: reduce) {
-  .t2v-header::before, .t2v-header, .t2v-intro, .t2v-player, .t2v-notes, .t2v-triage, .tabitem,
-  .t2v-player.t2v-playing .t2v-ctl.t2v-play { animation: none !important; }
-  .t2v-ctl, .t2v-rate, .t2v-fill, .t2v-captions .t2v-s, .t2v-captions p, button { transition: none !important; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .t2v-reveal { opacity: 1; transform: none; }
 }
+
 @media (max-width: 760px) { .t2v-header-side { align-items: flex-start; } .t2v-header-points { justify-content: flex-start; } }
 .t2v-header-points span { padding: 7px 12px; border-radius: 999px; font-size: .85rem; font-weight: 500;
   background: #ffffff14; border: 1px solid #ffffff26; color: var(--t2v-brand-text); }
@@ -569,6 +646,10 @@ html.t2v-has-bg .wrap, html.t2v-has-bg .contain { background: transparent !impor
 .t2v-link-btn:focus-visible { outline: 2px solid var(--t2v-mode); outline-offset: 2px; }
 
 @media (max-width: 760px) {
+  /* all four tabs must fit on a phone; Gradio otherwise hides the extra ones behind a "..." menu.
+     Gradio measures invisible copies of the tab buttons, so style every button in the tab bar alike. */
+  .t2v-tabs > .tab-wrapper .tab-container { gap: 0 !important; }
+  .t2v-tabs > .tab-wrapper .tab-container button { padding: 8px 7px !important; font-size: .86rem !important; letter-spacing: -.01em; }
   .t2v-header { padding: 22px 20px; } .t2v-header h1 { font-size: 1.7rem; }
   .t2v-tabs > .tab-wrapper button[role="tab"] { padding: 8px 10px !important; font-size: .95rem !important; }
   .t2v-controls { gap: 8px; } .t2v-ctl { width: 36px; height: 36px; } .t2v-ctl.t2v-play { width: 48px; height: 48px; }
@@ -638,7 +719,7 @@ with gr.Blocks(title="Tex2vois") as demo:
                     help_text("Tip: start a line with <b>#</b> to make it a chapter heading.")
                 with gr.Column(scale=7):
                     a_out = listen_panel("Paste some text and press <b>Read it to me</b>.")
-            a_job = a_go.click(run_article, [text, voice, speed, a_rewrite, fmt], list(a_out))
+            a_job = a_go.click(run_article, [text, voice, speed, a_rewrite, fmt], list(a_out), show_progress_on=[a_out[0]])
             a_stop.click(stop, None, None, cancels=[a_job])
 
         with gr.Tab("Research paper", elem_classes="t2v-mode-paper"):
@@ -656,7 +737,7 @@ with gr.Blocks(title="Tex2vois") as demo:
                               "you'll hear the paper's own abstract instead.")
                 with gr.Column(scale=7):
                     p_out = listen_panel("Add a paper, choose what you'd like to hear, and press <b>Read it to me</b>.")
-            p_job = p_go.click(run_paper, [pdf, mode, voice, speed, p_rewrite, fmt], list(p_out))
+            p_job = p_go.click(run_paper, [pdf, mode, voice, speed, p_rewrite, fmt], list(p_out), show_progress_on=[p_out[0]])
             p_stop.click(stop, None, None, cancels=[p_job])
 
             with gr.Column(elem_classes="t2v-triage"):
@@ -670,7 +751,7 @@ with gr.Blocks(title="Tex2vois") as demo:
                 with gr.Row(elem_classes="t2v-triage-actions"):
                     copy_plain = gr.Button("Copy instructions", variant="primary")
                     copy_full = gr.Button("Copy instructions with the paper's text")
-                copy_status = gr.Markdown()
+                copy_status = gr.Markdown(elem_classes="t2v-copy-status")
                 gr.HTML(f'<div class="t2v-links"><span>Then open:</span>{ASSISTANT_LINKS}</div>', padding=False)
             t_inputs = [pdf, focus, t_ctx, t_use]
             pdf.change(triage_prompt, t_inputs, [t_prompt, t_text])
@@ -694,7 +775,7 @@ with gr.Blocks(title="Tex2vois") as demo:
                         with gr.Row(elem_classes="t2v-triage-actions"):
                             d_copy = gr.Button("Copy script instructions", variant="primary")
                             d_copy_full = gr.Button("Copy with the paper's text")
-                        d_copy_status = gr.Markdown()
+                        d_copy_status = gr.Markdown(elem_classes="t2v-copy-status")
                         gr.HTML(f'<div class="t2v-links"><span>Then open:</span>{ASSISTANT_LINKS}</div>', padding=False)
                     script_in = gr.Textbox(label="Paste the script from your assistant", lines=12, max_lines=30,
                                            placeholder="Paste the assistant's whole answer here, including every part if it continued over several messages.")
@@ -712,7 +793,7 @@ with gr.Blocks(title="Tex2vois") as demo:
             d_copy.click(None, [d_prompt], d_copy_status, js=COPY_PLAIN_JS)
             d_copy_full.click(None, [d_prompt, d_text], d_copy_status, js=COPY_FULL_JS)
             script_file.change(deep_load_file, script_file, script_in)
-            d_job = d_go.click(run_deep, [script_in, d_pdf, voice, speed, fmt], list(d_out))
+            d_job = d_go.click(run_deep, [script_in, d_pdf, voice, speed, fmt], list(d_out), show_progress_on=[d_out[0]])
             d_stop.click(stop, None, None, cancels=[d_job])
 
         with gr.Tab("Book", elem_classes="t2v-mode-book"):
@@ -738,7 +819,7 @@ with gr.Blocks(title="Tex2vois") as demo:
                     gr.HTML(player.NOTES, padding=False)
 
             book_file.change(book_loaded, [book_file, voice, speed], [chapters, book_info, listen_to, b_player])
-            b_job = b_go.click(book_generate, [book_file, chapters, voice, speed], [chapters, listen_to, b_status])
+            b_job = b_go.click(book_generate, [book_file, chapters, voice, speed], [chapters, listen_to, b_status], show_progress_on=[b_status])
             b_stop.click(stop, None, None, cancels=[b_job])
             listen_to.change(book_listen, [book_file, listen_to, voice, speed], b_player)
             b_build.click(book_download, [book_file, voice, speed], b_file)
@@ -757,4 +838,5 @@ with gr.Blocks(title="Tex2vois") as demo:
 
 if __name__ == "__main__":
     page_js = player.JS.replace("() => {", "() => {" + themes.JS, 1)
-    demo.queue(default_concurrency_limit=2).launch(theme=THEME, js=page_js, css=CSS + themes.css(), allowed_paths=[str(OUT_DIR)])
+    demo.queue(default_concurrency_limit=2).launch(theme=THEME, js=page_js, css=CSS + themes.css() + scenes.css(),
+                                                    allowed_paths=[str(OUT_DIR), str(scenes.LOCAL_ART)])

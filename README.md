@@ -123,7 +123,9 @@ switch leaves it out for a single paper.
 playback speed; captions dim everything except the paragraph being read. Pick a colour theme in the header
 (Classic, or palettes inspired by Naruto, Demon Slayer, One Piece, Solo Leveling and Hunter x Hunter; colours and
 original CSS patterns only, no artwork), each with light and dark versions checked for contrast. You can also set
-your own background picture: it is resized and kept in your browser only, never uploaded. Animations are gentle and
+your own background picture: it is resized and kept in your browser only, never uploaded. Each anime theme also has
+an original illustrated scene (drawn in SVG, no copied art); to use your own picture for a theme on your computer,
+put it in `local_art/` as `naruto.jpg`, `one-piece.jpg` and so on. That folder is git-ignored, so it is never published. Animations are gentle and
 switch off when your device asks for reduced motion.
 
 While listening, the words light up as they are read and the caption box scrolls with the audio (click a
@@ -234,8 +236,14 @@ pbpaste | tex2vois - -o article.mp3         # an article from the clipboard
 ## Tests
 
 ```bash
-pytest
+pytest                                   # fast unit tests
+TEX2VOIS_E2E=1 pytest tests/e2e -q       # browser tests (once: playwright install chromium)
 ```
+
+The browser tests start their own copy of the app with AI switched off (`TEX2VOIS_LLM=off`) and check, in light and
+dark mode and several themes, that every dropdown opens next to its box with every option clickable, no button is
+covered, all four tabs fit on a phone, the player controls, Stop, notes, themes and background picture work, and each
+tab's full flow (article, paper modes, assistant script, book) produces audio with captions.
 
 ## Roadmap
 
