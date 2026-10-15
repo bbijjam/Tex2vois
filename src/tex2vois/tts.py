@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import re
 import warnings
 
@@ -50,6 +51,31 @@ def silence(seconds: float) -> np.ndarray:
     return np.zeros(int(SAMPLE_RATE * seconds), dtype=np.float32)
 
 
+MAX_ESPEAK_PATH = 100  # espeak-ng silently ignores data folders with long paths and then crashes
+
+
+def _short_espeak_data() -> None:
+    """Point espeak-ng (used by Kokoro's English pronunciation) at a data folder with a short path.
+
+    espeak-ng keeps its data path in a small fixed-size buffer. If the project lives somewhere
+    deep, the path is ignored and espeak falls back to a path from its build machine, which fails
+    with "Error processing file .../phontab". A one-time copy to ~/.cache/tex2vois avoids that.
+    """
+    import shutil
+
+    import espeakng_loader
+    from phonemizer.backend.espeak.wrapper import EspeakWrapper
+
+    source = Path(espeakng_loader.get_data_path())
+    if len(str(source)) <= MAX_ESPEAK_PATH:
+        return
+    target = Path.home() / ".cache" / "tex2vois" / "espeak-ng-data"
+    if not (target / "phontab").exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, target, dirs_exist_ok=True)
+    EspeakWrapper.set_data_path(str(target))
+
+
 class Synthesizer:
     """Lazily loads one Kokoro pipeline per language and caches it."""
 
@@ -64,8 +90,10 @@ class Synthesizer:
         if lang not in self._pipelines:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
+                import misaki.espeak  # noqa: F401  (sets espeak's data path, which we may shorten)
                 from kokoro import KPipeline
 
+                _short_espeak_data()
                 self._pipelines[lang] = KPipeline(
                     lang_code=lang, repo_id="hexgrad/Kokoro-82M", device=self.device
                 )
