@@ -29,28 +29,23 @@ PREVIEW_TEXT = "Hi! I'll be reading for you today. Sit back and enjoy."
 
 # Everything a visitor sees is in plain language.
 VOICE_CHOICES = [
-    ("Heart · warm, American", "af_heart"),
-    ("Bella · bright, American", "af_bella"),
-    ("Nicole · soft, American", "af_nicole"),
-    ("Michael · steady, American", "am_michael"),
-    ("Fenrir · deep, American", "am_fenrir"),
-    ("Puck · lively, American", "am_puck"),
-    ("Emma · clear, British", "bf_emma"),
-    ("George · classic narrator, British", "bm_george"),
-    ("Fable · storyteller, British", "bm_fable"),
+    ("Heart (warm, American)", "af_heart"),
+    ("Bella (bright, American)", "af_bella"),
+    ("Nicole (soft, American)", "af_nicole"),
+    ("Michael (steady, American)", "am_michael"),
+    ("Fenrir (deep, American)", "am_fenrir"),
+    ("Puck (lively, American)", "am_puck"),
+    ("Emma (clear, British)", "bf_emma"),
+    ("George (classic narrator, British)", "bm_george"),
+    ("Fable (storyteller, British)", "bm_fable"),
 ]
 FORMAT_CHOICES = [("Audiobook", "m4b"), ("MP3", "mp3")]  # audiobook files keep chapters; MP3 plays anywhere
 MODE_CHOICES = [
-    ("Quick summary · about 2 minutes", "summary"),
-    ("Highlights · the most important parts", "skim"),
+    ("Quick summary (about 2 minutes)", "summary"),
+    ("Highlights (the most important parts)", "skim"),
     ("The whole paper", "full"),
 ]
-EMPTY = """
-<div class="t2v-empty">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
-    <path d="M3 10v4M7 7v10M11 4v16M15 8v8M19 11v2"/></svg>
-  <div><strong>{title}</strong><span>{hint}</span></div>
-</div>"""
+EMPTY = """<div class="t2v-empty"><strong>{title}</strong><span>{hint}</span></div>"""
 
 
 class Stopped(Exception):
@@ -98,13 +93,13 @@ def _about(report: pipeline.Report) -> str:
     """A plain-language note about the audio that was just made."""
     s = report.script
     what = {"summary": "a quick summary", "skim": "the highlights", "full": "the whole text"}[s.mode]
-    lines = [f"**{s.title}**", f"{_length(report.audio_seconds)} of listening · {s.words:,} words · {what}"]
+    lines = [f"**{s.title}**", f"{_length(report.audio_seconds)} of listening, {s.words:,} words, {what}."]
     if report.llm_model:
         lines.append("Written with help from a free AI model; every number and name was checked against the original.")
     for note in s.notes:
         friendly = "The AI summary couldn't be checked, so you're hearing the paper's own abstract instead." \
             if "abstract" in note else "Part of the AI help was skipped because it couldn't be checked against the paper."
-        lines.append(f"ⓘ {friendly}")
+        lines.append(friendly)
     return "\n\n".join(lines)
 
 
@@ -156,7 +151,7 @@ def stop(request: gr.Request):
 
 def _chapter_choices(script, folder: Path | None):
     done = book.finished(folder) if folder else {}
-    return [(f"{'✓ ' if i in done else ''}{c['title']}  ·  {_length(c['minutes'] * 60)}", i)
+    return [(f"{c['title']} ({_length(c['minutes'] * 60)}{', ready' if i in done else ''})", i)
             for i, c in enumerate(book.chapter_plan(script))]
 
 
@@ -176,9 +171,10 @@ def book_loaded(file, voice, speed):
     plan = book.chapter_plan(script)
     total = sum(c["minutes"] for c in plan) * 60
     done = book.finished(folder)
-    resume = f"\n\n✓ {len(done)} chapters are already ready; pressing **Start** carries on from there." if done else ""
-    info = (f"### {script.title}\n{len(plan)} chapters · about **{_length(total)}** of listening · "
-            f"takes about {_length(total * MAKE_TIME)} to prepare{resume}")
+    ready_text = "1 chapter is" if len(done) == 1 else f"{len(done)} chapters are"
+    resume = f"\n\n{ready_text} already ready. Pressing **Start** carries on from there." if done else ""
+    info = (f"### {script.title}\n{len(plan)} chapters, about **{_length(total)}** of listening. "
+            f"Preparing all of it takes about {_length(total * MAKE_TIME)}.{resume}")
     ready = _ready_choices(script, folder)
     return (gr.update(choices=_chapter_choices(script, folder), value=[c["index"] for c in plan]), info,
             gr.update(choices=ready, value=ready[0][1] if ready else None),
@@ -205,14 +201,14 @@ def book_generate(file, chosen, voice, speed, request: gr.Request, progress=gr.P
             ready = _ready_choices(script, folder)
             yield (gr.update(choices=_chapter_choices(script, folder), value=order),
                    gr.update(choices=ready, value=ready[0][1] if len(ready) == 1 else gr.skip()),
-                   f"✓ **{title}** is ready. {len([j for j in order if j in book.finished(folder)])} of {len(order)} done.")
+                   f"**{title}** is ready. {len([j for j in order if j in book.finished(folder)])} of {len(order)} chapters done.")
     except Stopped:
         done = len([i for i in order if i in book.finished(folder)])
-        yield gr.skip(), gr.skip(), f"⏸ Paused. {done} of {len(order)} chapters are ready. Press **Start** to carry on."
+        yield gr.skip(), gr.skip(), f"Paused. {done} of {len(order)} chapters are ready. Press **Start** to carry on."
         return
     finally:
         STOP_REQUESTED.discard(session)
-    yield gr.skip(), gr.skip(), f"✅ All {len(order)} chapters are ready. You can download the whole book below."
+    yield gr.skip(), gr.skip(), f"All {len(order)} chapters are ready. You can download the whole book on the right."
 
 
 def book_listen(file, index, voice, speed):
@@ -240,92 +236,102 @@ def book_download(file, voice, speed):
 
 # ---------------------------------------------------------------- look and feel
 
-THEME = gr.themes.Soft(
-    primary_hue="indigo", secondary_hue="violet", neutral_hue="slate",
-    font=[gr.themes.GoogleFont("Inter"), "ui-sans-serif", "system-ui", "sans-serif"],
-    radius_size="lg",
+INK, INK_HOVER, INK_DARK, INK_DARK_HOVER = "#1f4d7a", "#173c60", "#9cc3ec", "#b8d4f2"
+
+THEME = gr.themes.Base(
+    primary_hue=gr.themes.colors.slate, secondary_hue=gr.themes.colors.slate, neutral_hue=gr.themes.colors.stone,
+    font=[gr.themes.GoogleFont("IBM Plex Sans"), "system-ui", "sans-serif"],
+    font_mono=[gr.themes.GoogleFont("IBM Plex Mono"), "ui-monospace", "monospace"],
+    radius_size=gr.themes.sizes.radius_sm,
 ).set(
-    body_background_fill="#f5f6fa",
-    body_background_fill_dark="#0b0f17",
-    block_background_fill="#ffffff",
-    block_background_fill_dark="#121826",
-    block_border_width="1px",
-    block_border_color="#e7e9f0",
-    block_border_color_dark="#232b3b",
-    block_shadow="0 1px 2px rgba(16,24,40,.04), 0 8px 24px rgba(16,24,40,.05)",
-    block_label_text_weight="600",
-    block_label_background_fill="transparent",
-    block_label_background_fill_dark="transparent",
-    block_title_background_fill="transparent",
-    block_title_background_fill_dark="transparent",
-    block_title_text_color="*neutral_700",
-    block_title_text_color_dark="*neutral_200",
-    block_title_padding="0",
-    block_label_padding="0",
-    button_large_radius="12px",
-    button_primary_background_fill="linear-gradient(135deg, *primary_500, *secondary_500)",
-    button_primary_background_fill_hover="linear-gradient(135deg, *primary_600, *secondary_600)",
-    button_primary_text_color="white",
+    body_background_fill="#f4f2ee", body_background_fill_dark="#121213",
+    body_text_color="#1f1d1a", body_text_color_dark="#ececea",
+    body_text_color_subdued="#5f5a52", body_text_color_subdued_dark="#b3afa8",
+    background_fill_primary="#ffffff", background_fill_primary_dark="#1c1c1e",
+    background_fill_secondary="#f7f6f3", background_fill_secondary_dark="#232325",
+    block_background_fill="#ffffff", block_background_fill_dark="#1c1c1e",
+    block_border_color="#e3e0da", block_border_color_dark="#3a3a3d", block_border_width="1px",
+    block_shadow="none", block_shadow_dark="none",
+    block_label_background_fill="transparent", block_label_background_fill_dark="transparent",
+    block_label_text_color="#3d3933", block_label_text_color_dark="#d6d3cd",
+    block_label_text_weight="600", block_label_padding="0",
+    block_title_background_fill="transparent", block_title_background_fill_dark="transparent",
+    block_title_text_color="#3d3933", block_title_text_color_dark="#d6d3cd",
+    block_title_text_weight="600", block_title_padding="0",
+    input_background_fill="#ffffff", input_background_fill_dark="#232325",
+    input_border_color="#d6d2ca", input_border_color_dark="#45454a",
+    input_border_color_focus=INK, input_border_color_focus_dark=INK_DARK,
+    input_placeholder_color="#8a847a", input_placeholder_color_dark="#8f8b84",
+    border_color_primary="#e3e0da", border_color_primary_dark="#3a3a3d",
+    color_accent=INK, color_accent_soft="#e6eef6", color_accent_soft_dark="#1f2a36",
+    checkbox_background_color_selected=INK, checkbox_background_color_selected_dark=INK_DARK,
+    checkbox_border_color_selected=INK, checkbox_border_color_selected_dark=INK_DARK,
+    checkbox_label_background_fill="#ffffff", checkbox_label_background_fill_dark="#232325",
+    checkbox_label_background_fill_selected="#e6eef6", checkbox_label_background_fill_selected_dark="#1f2a36",
+    checkbox_label_text_color_selected=INK, checkbox_label_text_color_selected_dark=INK_DARK,
+    slider_color=INK, slider_color_dark=INK_DARK,
+    button_primary_background_fill=INK, button_primary_background_fill_hover=INK_HOVER,
+    button_primary_background_fill_dark=INK_DARK, button_primary_background_fill_hover_dark=INK_DARK_HOVER,
+    button_primary_text_color="#ffffff", button_primary_text_color_dark="#0f1a26",
+    button_primary_border_color=INK, button_primary_border_color_dark=INK_DARK,
+    button_secondary_background_fill="#ffffff", button_secondary_background_fill_dark="#232325",
+    button_secondary_background_fill_hover="#f2f0ec", button_secondary_background_fill_hover_dark="#2c2c2f",
+    button_secondary_text_color="#1f1d1a", button_secondary_text_color_dark="#ececea",
+    button_secondary_border_color="#d6d2ca", button_secondary_border_color_dark="#45454a",
+    button_cancel_background_fill="#ffffff", button_cancel_background_fill_dark="#232325",
+    button_cancel_background_fill_hover="#fbefee", button_cancel_background_fill_hover_dark="#3a2524",
+    button_cancel_text_color="#9b2c2c", button_cancel_text_color_dark="#f2b8b5",
+    button_cancel_border_color="#e7c4c1", button_cancel_border_color_dark="#6a3a38",
+    link_text_color=INK, link_text_color_dark=INK_DARK,
 )
 
 CSS = player.CSS + """
-.gradio-container { max-width: 1200px !important; width: 100% !important; margin: 0 auto !important; padding-top: 8px !important; }
-footer { opacity: .45; }
+@import url('https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,400;7..72,600&display=swap');
+.gradio-container { max-width: 1180px !important; width: 100% !important; margin: 0 auto !important; padding-top: 8px !important; }
+footer { opacity: .5; }
 
-/* header */
-.t2v-header { display: flex; align-items: center; gap: 14px; padding: 18px 2px 6px; }
-.t2v-logo { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; color: #fff; flex: none;
-  background: linear-gradient(135deg, var(--primary-500), var(--secondary-500)); box-shadow: 0 8px 22px rgba(99,102,241,.35); }
-.t2v-logo svg { width: 26px; height: 26px; }
-.t2v-header h1 { margin: 0; font-size: 1.75rem; font-weight: 760; letter-spacing: -.025em; }
-.t2v-header p { margin: 2px 0 0; color: var(--body-text-color-subdued); font-size: 1rem; }
+/* header: a plain wordmark, no logo tile */
+.t2v-header { padding: 22px 2px 10px; border-bottom: 1px solid var(--t2v-border); margin-bottom: 6px; }
+.t2v-header h1 { margin: 0; font-family: 'Literata', Georgia, serif; font-size: 1.9rem; font-weight: 600;
+  letter-spacing: -.01em; color: var(--t2v-text); }
+.t2v-header p { margin: 4px 0 0; color: var(--t2v-muted); font-size: 1rem; }
 
-/* tabs as big choice cards, like a reading app's home screen */
-.t2v-tabs > .tab-wrapper { margin: 10px 0 14px; }
-.t2v-tabs > .tab-wrapper .tab-container { gap: 10px; border: none !important; height: auto !important; }
+/* tabs: simple underlined text tabs */
+.t2v-tabs > .tab-wrapper { margin: 6px 0 14px; }
+.t2v-tabs > .tab-wrapper .tab-container { gap: 4px; }
 .t2v-tabs > .tab-wrapper button[role="tab"] {
-  flex: 1; height: auto !important; padding: 14px 16px !important; border-radius: 14px !important;
-  border: 1.5px solid var(--block-border-color) !important; background: var(--block-background-fill) !important;
-  font-size: 1.02rem !important; font-weight: 650 !important; color: var(--body-text-color) !important;
-  box-shadow: 0 1px 2px rgba(16,24,40,.04); transition: all .15s;
+  font-size: 1rem !important; font-weight: 500 !important; color: var(--t2v-muted) !important;
+  padding: 10px 14px !important; background: transparent !important; border: none !important;
 }
-.t2v-tabs > .tab-wrapper button[role="tab"]:hover { border-color: var(--primary-300) !important; }
-.t2v-tabs > .tab-wrapper button[role="tab"].selected {
-  border-color: var(--primary-500) !important; color: var(--primary-600) !important;
-  background: color-mix(in srgb, var(--primary-500) 7%, var(--block-background-fill)) !important;
-}
-.t2v-tabs > .tab-wrapper button[role="tab"].selected::after { display: none !important; }
+.t2v-tabs > .tab-wrapper button[role="tab"]:hover { color: var(--t2v-text) !important; }
+.t2v-tabs > .tab-wrapper button[role="tab"].selected { color: var(--t2v-text) !important; font-weight: 600 !important; }
+.t2v-tabs > .tab-wrapper button[role="tab"].selected::after { background: var(--t2v-accent) !important; height: 2px !important; }
 
-/* settings bar: one white card */
-.t2v-settings { background: var(--block-background-fill); border: 1px solid var(--block-border-color);
-  border-radius: 16px; padding: 14px 16px !important; gap: 16px !important; align-items: center !important;
-  box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 8px 24px rgba(16,24,40,.05); }
-.t2v-settings > * { border: none !important; box-shadow: none !important; background: transparent !important; }
+/* settings bar: one quiet panel */
+.t2v-settings { background: var(--t2v-surface); border: 1px solid var(--t2v-border); border-radius: 8px;
+  padding: 14px 16px !important; gap: 18px !important; align-items: center !important; margin-top: 10px; }
+.t2v-settings > *:not(button) { border: none !important; box-shadow: none !important; background: transparent !important; }
 .t2v-settings input[type=number], .t2v-settings button[aria-label*='eset'], .t2v-settings .reset-button { display: none !important; }
-.t2v-settings button { min-height: 44px; }
+.t2v-settings button { min-height: 42px; }
 
-/* cards and text */
-.t2v-card-title { font-size: 1.05rem; font-weight: 700; margin: 2px 2px 8px; }
-.t2v-help { color: var(--body-text-color-subdued); font-size: .88rem; line-height: 1.45; margin: 6px 2px 0; }
-.t2v-empty { display: flex; gap: 14px; align-items: center; padding: 30px 20px; border-radius: 12px;
-  border: 1.5px dashed var(--block-border-color); color: var(--body-text-color-subdued); }
-.t2v-empty svg { width: 34px; height: 34px; flex: none; color: var(--primary-400); }
-.t2v-empty strong { display: block; color: var(--body-text-color); font-weight: 650; margin-bottom: 2px; }
-.t2v-buttons button { min-height: 48px; font-size: 1.02rem !important; font-weight: 650 !important; }
+.t2v-card-title { font-size: 1.05rem; font-weight: 600; margin: 2px 2px 10px; color: var(--t2v-text); }
+.t2v-help { color: var(--t2v-muted); font-size: .9rem; line-height: 1.5; margin: 8px 2px 0; }
+.t2v-empty { display: flex; flex-direction: column; gap: 4px; padding: 26px 22px; border-radius: 8px;
+  border: 1px dashed var(--t2v-border); background: var(--t2v-surface-2); color: var(--t2v-muted); }
+.t2v-empty strong { color: var(--t2v-text); font-weight: 600; }
+.t2v-buttons button { min-height: 46px; font-size: 1rem !important; font-weight: 600 !important; }
 .t2v-about { font-size: .95rem; }
-.t2v-player audio { height: 44px; }
 
 @media (max-width: 760px) {
-  .t2v-header h1 { font-size: 1.4rem; }
-  .t2v-tabs > .tab-wrapper button[role="tab"] { padding: 10px 8px !important; font-size: .92rem !important; }
+  .t2v-header h1 { font-size: 1.5rem; }
+  .t2v-tabs > .tab-wrapper button[role="tab"] { padding: 8px 10px !important; font-size: .95rem !important; }
 }
 """
 
 HEADER = """
 <div class="t2v-header">
-  <div class="t2v-logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
-    <path d="M3 10v4M7 7v10M11 4v16M15 8v8M19 11v2"/></svg></div>
-  <div><h1>Tex2vois</h1><p>Turn articles, research papers and books into audio, and follow along as it reads.</p></div>
+  <h1>Tex2vois</h1>
+  <p>Turn articles, research papers and books into audio, and follow the words as they are read.</p>
 </div>
 """
 
@@ -347,19 +353,19 @@ def listen_panel(hint: str):
     return listen, download, about
 
 
-with gr.Blocks(title="Tex2vois · listen to anything") as demo:
+with gr.Blocks(title="Tex2vois") as demo:
     gr.HTML(HEADER)
 
     with gr.Row(equal_height=True, elem_classes="t2v-settings"):
         voice = gr.Dropdown(VOICE_CHOICES, value=DEFAULT_VOICE, label="Voice", scale=3)
         speed = gr.Slider(0.7, 1.5, value=1.0, step=0.05, label="Reading speed", scale=3)
         fmt = gr.Dropdown(FORMAT_CHOICES, value="m4b", label="Save as", scale=2)
-        preview_btn = gr.Button("▶  Hear this voice", scale=2, size="lg")
+        preview_btn = gr.Button("Play a sample", scale=2, size="lg")
     preview_audio = gr.Audio(label="Voice sample", interactive=False, visible=False, autoplay=True)
     preview_btn.click(preview, [voice, speed], preview_audio)
 
     with gr.Tabs(elem_classes="t2v-tabs"):
-        with gr.Tab("📰  Article"):
+        with gr.Tab("Article"):
             with gr.Row(equal_height=False):
                 with gr.Column(scale=5):
                     with gr.Group():
@@ -375,7 +381,7 @@ with gr.Blocks(title="Tex2vois · listen to anything") as demo:
             a_job = a_go.click(run_article, [text, voice, speed, a_rewrite, fmt], list(a_out))
             a_stop.click(stop, None, None, cancels=[a_job])
 
-        with gr.Tab("🔬  Paper"):
+        with gr.Tab("Research paper"):
             with gr.Row(equal_height=False):
                 with gr.Column(scale=5):
                     pdf = gr.File(label="Add a paper (PDF)", file_types=[".pdf"], type="filepath", height=190)
@@ -392,7 +398,7 @@ with gr.Blocks(title="Tex2vois · listen to anything") as demo:
             p_job = p_go.click(run_paper, [pdf, mode, voice, speed, p_rewrite, fmt], list(p_out))
             p_stop.click(stop, None, None, cancels=[p_job])
 
-        with gr.Tab("📚  Book"):
+        with gr.Tab("Book"):
             with gr.Row(equal_height=False):
                 with gr.Column(scale=5):
                     book_file = gr.File(label="Add a book (EPUB, text file or PDF)", file_types=[".epub", ".txt", ".pdf"],
@@ -410,7 +416,7 @@ with gr.Blocks(title="Tex2vois · listen to anything") as demo:
                     listen_to = gr.Dropdown(label="Chapter", choices=[], value=None)
                     b_player = gr.HTML(empty("No book yet", "Add an EPUB, a plain-text book or a PDF on the left."), padding=False)
                     with gr.Row():
-                        b_build = gr.Button("⬇  Download the whole book", scale=1)
+                        b_build = gr.Button("Download the whole book", scale=1)
                     b_file = gr.File(label="Your audiobook", height=64, visible=False)
                     gr.HTML(player.NOTES, padding=False)
 

@@ -14,46 +14,68 @@ import html
 from itertools import groupby
 
 CSS = """
+/* Palette: warm neutrals, one ink-blue accent, a highlighter-yellow for the current sentence.
+   Every colour has an explicit dark-mode value (Gradio adds .dark to the page in dark mode). */
+:root {
+  --t2v-surface: #ffffff;
+  --t2v-surface-2: #f7f6f3;
+  --t2v-border: #e3e0da;
+  --t2v-text: #1f1d1a;
+  --t2v-muted: #5f5a52;
+  --t2v-accent: #1f4d7a;
+  --t2v-mark: #fbe7a1;
+  --t2v-mark-text: #1f1d1a;
+  --t2v-para: #f6f1e3;
+}
+.dark {
+  --t2v-surface: #1c1c1e;
+  --t2v-surface-2: #232325;
+  --t2v-border: #3a3a3d;
+  --t2v-text: #ececea;
+  --t2v-muted: #b3afa8;
+  --t2v-accent: #9cc3ec;
+  --t2v-mark: #6b5a1e;
+  --t2v-mark-text: #fff8e1;
+  --t2v-para: #2a2721;
+}
 .t2v-player { display: flex; flex-direction: column; gap: 10px; }
-.t2v-player audio { width: 100%; }
+.t2v-player audio { width: 100%; height: 44px; }
+.dark .t2v-player audio { color-scheme: dark; }
 .t2v-captions {
-  height: 25vh; min-height: 160px; overflow-y: auto; padding: 12px 16px;
-  border: 1px solid var(--border-color-primary, #d0d0d0); border-radius: 10px;
-  background: var(--block-background-fill, transparent);
-  font-size: 1.05rem; line-height: 1.7; color: var(--body-text-color, inherit);
-  scroll-behavior: smooth;
+  height: 25vh; min-height: 170px; overflow-y: auto; padding: 14px 18px;
+  border: 1px solid var(--t2v-border); border-radius: 8px; background: var(--t2v-surface);
+  font-family: 'Literata', Georgia, 'Times New Roman', serif;
+  font-size: 1.08rem; line-height: 1.75; color: var(--t2v-text); scroll-behavior: smooth;
 }
-.t2v-captions h4 { margin: 14px 0 4px; font-size: 0.95rem; opacity: 0.75; text-transform: none; }
+.t2v-captions h4 { margin: 16px 0 6px; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: .82rem;
+  font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--t2v-muted); }
 .t2v-captions h4:first-child { margin-top: 0; }
-.t2v-captions p { margin: 0 0 10px; padding: 2px 4px; border-radius: 6px; transition: background 0.2s; }
-.t2v-captions p.t2v-para-on { background: color-mix(in srgb, var(--color-accent, #f97316) 8%, transparent); }
-.t2v-captions .t2v-s { cursor: pointer; border-radius: 4px; transition: background 0.15s, color 0.15s; }
-.t2v-captions .t2v-s:hover { text-decoration: underline dotted; }
-.t2v-captions .t2v-s.t2v-on {
-  background: color-mix(in srgb, var(--color-accent, #f97316) 30%, transparent);
-  color: var(--body-text-color, inherit);
-}
-.t2v-captions h4.t2v-on { opacity: 1; color: var(--color-accent, #f97316); }
-.t2v-hint { font-size: 0.8rem; opacity: 0.65; }
+.t2v-captions p { margin: 0 0 12px; padding: 2px 6px; border-radius: 4px; transition: background .2s; }
+.t2v-captions p.t2v-para-on { background: var(--t2v-para); }
+.t2v-captions .t2v-s { cursor: pointer; border-radius: 3px; transition: background .15s; }
+.t2v-captions .t2v-s:hover { text-decoration: underline; text-decoration-color: var(--t2v-muted); text-underline-offset: 3px; }
+.t2v-captions .t2v-s.t2v-on { background: var(--t2v-mark); color: var(--t2v-mark-text); box-shadow: 0 0 0 2px var(--t2v-mark); }
+.t2v-captions h4.t2v-on { color: var(--t2v-accent); }
+.t2v-hint { font-size: .85rem; color: var(--t2v-muted); }
 
 .t2v-notes { display: flex; flex-direction: column; gap: 8px; }
 .t2v-notes-bar { display: flex; align-items: center; gap: 8px; }
-.t2v-notes-bar strong { flex: 1; font-size: 1rem; }
+.t2v-notes-bar strong { flex: 1; font-size: 1rem; font-weight: 600; color: var(--t2v-text); }
 .t2v-notes textarea {
-  width: 100%; box-sizing: border-box; height: 25vh; min-height: 160px; resize: vertical;
-  padding: 10px 12px; border-radius: 10px; font: inherit; font-size: 0.95rem; line-height: 1.5;
-  border: 1px solid var(--border-color-primary, #d0d0d0);
-  background: var(--input-background-fill, var(--block-background-fill, transparent));
-  color: var(--body-text-color, inherit);
+  width: 100%; box-sizing: border-box; height: 25vh; min-height: 170px; resize: vertical;
+  padding: 12px 14px; border-radius: 8px; font: inherit; font-size: .97rem; line-height: 1.55;
+  border: 1px solid var(--t2v-border); background: var(--t2v-surface); color: var(--t2v-text);
 }
+.t2v-notes textarea::placeholder { color: var(--t2v-muted); opacity: 1; }
+.t2v-notes textarea:focus { outline: 2px solid var(--t2v-accent); outline-offset: -1px; }
 .t2v-icon-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  min-width: 36px; height: 36px; padding: 0 10px; border-radius: 8px; cursor: pointer;
-  border: 1px solid var(--border-color-primary, #d0d0d0);
-  background: var(--button-secondary-background-fill, transparent);
-  color: var(--body-text-color, inherit); font: inherit; font-size: 0.85rem;
+  min-width: 38px; height: 36px; padding: 0 12px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--t2v-border); background: var(--t2v-surface); color: var(--t2v-text);
+  font: inherit; font-size: .88rem; font-weight: 500;
 }
-.t2v-icon-btn:hover { border-color: var(--color-accent, #f97316); }
+.t2v-icon-btn:hover { border-color: var(--t2v-accent); color: var(--t2v-accent); }
+.t2v-icon-btn:focus-visible { outline: 2px solid var(--t2v-accent); outline-offset: 2px; }
 .t2v-icon-btn svg { width: 18px; height: 18px; }
 """
 
@@ -66,7 +88,7 @@ NOTES = f"""
 <div class="t2v-notes">
   <div class="t2v-notes-bar">
     <strong>Your notes</strong>
-    <button type="button" class="t2v-icon-btn" data-t2v="stamp" title="Add the current moment to your notes">📍 Mark this moment</button>
+    <button type="button" class="t2v-icon-btn" data-t2v="stamp" title="Add the current moment to your notes">Mark this moment</button>
     <button type="button" class="t2v-icon-btn" data-t2v="download" title="Save your notes to your computer" aria-label="Save notes">{DOWNLOAD_ICON}</button>
   </div>
   <textarea class="t2v-notes-text" placeholder="Jot down thoughts while you listen. Your notes stay in this browser, and the download button saves a copy."></textarea>

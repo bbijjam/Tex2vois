@@ -34,7 +34,7 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     # tidy
     (re.compile(r"\(\s*\)"), ""),
     (re.compile(r"\s+([,.;:!?])"), r"\1"),
-    (re.compile(r"([,;:])(?=[^\s\d])"), r"\1 "),
+    (re.compile(r"([,;:])(?=[^\s\d\"'\u201d\u2019)\]])"), r"\1 "),  # not before closing quotes/brackets
     (re.compile(r",\s*,"), ","),
     (re.compile(r"[ \t]{2,}"), " "),
 ]
