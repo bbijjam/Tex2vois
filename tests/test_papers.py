@@ -67,8 +67,8 @@ def test_real_paper(name):
         pytest.skip(f"{name} not available locally")
     abstract, first, late, thanks = PAPERS[name]
     script, _ = pipeline.prepare(path)
-    titles = [t for t, _ in script]
-    text = re.sub(r"\s+", " ", " ".join(p for _, ps in script for p in ps))
+    titles = [c.title for c in script.chapters]
+    text = re.sub(r"\s+", " ", " ".join(p.text for c in script.chapters for p in c.paras))
     assert titles[0].lower() == "abstract" and first in titles and late in titles
     assert abstract in text
     assert thanks not in text  # acknowledgements skipped

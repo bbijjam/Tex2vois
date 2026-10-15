@@ -11,3 +11,6 @@ output/
 *.m4b
 .DS_Store
 .gradio/
+
+# secrets
+.env

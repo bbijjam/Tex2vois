@@ -1,7 +1,8 @@
-"""End-to-end: PDF -> sections -> clean (-> LLM rewrite) -> speech -> audiobook."""
+"""End-to-end: source -> Script -> mode (full/skim/summary) -> optional LLM rewrite -> speech -> audiobook."""
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,7 +10,10 @@ from typing import Callable
 
 import numpy as np
 
-from . import audio, clean, extract, rewrite
+from . import audio, modes
+from .llm import LLM
+from .rewrite import RewriteStats, rewrite_script
+from .script import Script, from_pdf, from_text
 from .tts import DEFAULT_VOICE, SAMPLE_RATE, Synthesizer, silence, split_sentences
 
 Progress = Callable[[float, str], None]
@@ -22,15 +26,13 @@ PAUSE_CHAPTER = 1.5
 @dataclass
 class Report:
     output: Path
-    chapters: list[str]
-    words: int
+    script: Script
     audio_seconds: float
-    extract_seconds: float
-    rewrite_seconds: float
     tts_seconds: float
-    rewrite_batches: int = 0
-    rewrite_rejected: int = 0
-    script: list[tuple[str, list[str]]] = field(default_factory=list, repr=False)
+    prepare_seconds: float = 0.0
+    rewrite: RewriteStats | None = None
+    llm_model: str | None = None
+    cues: list[dict] = field(default_factory=list, repr=False)
 
     @property
     def rtf(self) -> float:
@@ -41,103 +43,119 @@ class Report:
         m, s = divmod(round(self.audio_seconds), 60)
         lines = [
             f"Output:     {self.output}",
-            f"Chapters:   {len(self.chapters)}",
-            f"Words:      {self.words:,}",
+            f"Mode:       {self.script.kind} / {self.script.mode}",
+            f"Chapters:   {len(self.script.chapters)}",
+            f"Words:      {self.script.words:,}",
             f"Audio:      {m}m {s:02d}s",
-            f"Extract:    {self.extract_seconds:.1f}s",
+            f"Prepare:    {self.prepare_seconds:.1f}s" + (f"  (LLM: {self.llm_model})" if self.llm_model else ""),
         ]
-        if self.rewrite_batches:
+        if self.rewrite and self.rewrite.batches:
+            r = self.rewrite
             lines.append(
-                f"LLM rewrite:{self.rewrite_seconds:6.1f}s  ({self.rewrite_batches} batches, "
-                f"{self.rewrite_rejected} rejected by length guard)"
+                f"Rewrite:    {r.batches} batches, kept original for {r.rejected} "
+                f"(length {r.rejected_length}, facts {r.rejected_facts}, errors {r.failed})"
             )
         lines.append(f"Synthesis:  {self.tts_seconds:.1f}s  (RTF {self.rtf:.2f})")
         return "\n".join(lines)
 
 
+def load(source: str | Path, kind: str = "auto", title: str | None = None, max_pages: int | None = None) -> Script:
+    """A PDF path, a .txt/.md path, or raw pasted text."""
+    path = Path(source) if isinstance(source, Path) or (len(str(source)) < 1024 and "\n" not in str(source)) else None
+    if path is not None and path.suffix.lower() == ".pdf":
+        script = from_pdf(str(path), max_pages=max_pages)
+    elif path is not None and path.suffix.lower() in (".txt", ".md") and path.exists():
+        script = from_text(path.read_text(encoding="utf-8", errors="replace"), title or path.stem)
+    else:
+        script = from_text(str(source), title)
+    if kind != "auto":
+        script.kind = kind
+    return script
+
+
 def prepare(
-    pdf_path: str | Path,
+    source: str | Path,
+    kind: str = "auto",
+    mode: str = "full",
     use_llm: bool = False,
-    llm_model: str = rewrite.DEFAULT_MODEL,
+    llm: LLM | None = None,
+    title: str | None = None,
     max_pages: int | None = None,
     progress: Progress | None = None,
-) -> tuple[list[tuple[str, list[str]]], dict]:
-    """Extract and clean text. Returns the 'script' [(chapter title, paragraphs)] and timings."""
+) -> tuple[Script, RewriteStats | None]:
+    """Build the script that will be spoken. `use_llm` enables the rewrite pass;
+    skim/summary use the LLM whenever one is given."""
     say = progress or (lambda f, m: None)
-    stats = {"extract_seconds": 0.0, "rewrite_seconds": 0.0, "rewrite_batches": 0, "rewrite_rejected": 0}
-
-    t = time.perf_counter()
-    say(0.0, "Extracting text")
-    sections = extract.extract(str(pdf_path), max_pages=max_pages)
-    script = []
-    for i, sec in enumerate(sections, 1):
-        paras = [clean.clean(p) for p in sec.paragraphs]
-        paras = [p for p in paras if not clean.is_noise(p)]
-        if paras:
-            script.append((clean.clean(sec.title) or f"Part {i}", paras))
-    stats["extract_seconds"] = time.perf_counter() - t
-    if not script:
-        raise ValueError("No readable text found. Is this a scanned PDF? (OCR is on the roadmap.)")
-
+    say(0.0, "Reading")
+    script = load(source, kind, title, max_pages)
+    if mode != "full":
+        say(0.03, f"Building {mode}")
+        script = modes.apply(script, mode, llm)
+    stats = None
     if use_llm:
-        rewrite.check_ollama(llm_model)
-        t = time.perf_counter()
-        rewritten = []
-        for i, (title, paras) in enumerate(script):
-            say(0.05 + 0.25 * i / len(script), f"Rewriting for listening: {title}")
-            new, batches, rejected = rewrite.rewrite_paragraphs(paras, model=llm_model)
-            stats["rewrite_batches"] += batches
-            stats["rewrite_rejected"] += rejected
-            rewritten.append((title, new))
-        script = rewritten
-        stats["rewrite_seconds"] = time.perf_counter() - t
+        if llm is None:
+            raise ValueError("LLM rewrite requested but no LLM configured.")
+        script, stats = rewrite_script(script, llm, progress=lambda f, m: say(0.05 + 0.25 * f, m))
     return script, stats
 
 
-def convert(
-    pdf_path: str | Path,
+def speak(
+    script: Script,
     out_path: str | Path,
     voice: str = DEFAULT_VOICE,
     speed: float = 1.0,
+    synthesizer: Synthesizer | None = None,
+    progress: Progress | None = None,
+    start: float = 0.3,
+) -> tuple[Path, float, float, list[dict]]:
+    say = progress or (lambda f, m: None)
+    tts = synthesizer or Synthesizer()
+    total = sum(len(p.text) for c in script.chapters for p in c.paras) or 1
+    done, cues, offset = 0, [], 0
+    t = time.perf_counter()
+    chapters: list[tuple[str, np.ndarray]] = []
+    for ch in script.chapters:
+        parts = [tts.speak(ch.title + ".", voice, speed), silence(PAUSE_CHAPTER * 0.6)]
+        chapter_start = offset
+        offset += sum(len(x) for x in parts)
+        for para in ch.paras:
+            cues.append({"id": para.id, "source": para.source, "chapter": ch.title, "start": round(offset / SAMPLE_RATE, 2)})
+            for sentence in split_sentences(para.text):
+                parts += [tts.speak(sentence, voice, speed), silence(PAUSE_SENTENCE)]
+            parts.append(silence(PAUSE_PARAGRAPH))
+            offset = chapter_start + sum(len(x) for x in parts)
+            done += len(para.text)
+            say(start + (0.95 - start) * done / total, f"Speaking: {ch.title}")
+        parts.append(silence(PAUSE_CHAPTER))
+        offset = chapter_start + sum(len(x) for x in parts)
+        chapters.append((ch.title, np.concatenate(parts)))
+    tts_seconds = time.perf_counter() - t
+
+    say(0.96, "Encoding audio")
+    out = audio.export(chapters, out_path, title=script.title)
+    out.with_suffix(".cues.json").write_text(json.dumps({"title": script.title, "mode": script.mode, "cues": cues}, indent=1))
+    say(1.0, "Done")
+    return out, sum(len(a) for _, a in chapters) / SAMPLE_RATE, tts_seconds, cues
+
+
+def convert(
+    source: str | Path,
+    out_path: str | Path,
+    kind: str = "auto",
+    mode: str = "full",
+    voice: str = DEFAULT_VOICE,
+    speed: float = 1.0,
     use_llm: bool = False,
-    llm_model: str = rewrite.DEFAULT_MODEL,
+    llm: LLM | None = None,
+    title: str | None = None,
     max_pages: int | None = None,
     synthesizer: Synthesizer | None = None,
     progress: Progress | None = None,
 ) -> Report:
-    say = progress or (lambda f, m: None)
-    script, stats = prepare(pdf_path, use_llm, llm_model, max_pages, progress)
-
-    tts = synthesizer or Synthesizer()
-    total_chars = sum(len(p) for _, paras in script for p in paras) or 1
-    done_chars = 0
-    synth_start = 0.3 if use_llm else 0.05
-
     t = time.perf_counter()
-    chapters: list[tuple[str, np.ndarray]] = []
-    for title, paras in script:
-        parts = [tts.speak(title + ".", voice, speed), silence(PAUSE_CHAPTER * 0.6)]
-        for para in paras:
-            for sentence in split_sentences(para):
-                parts += [tts.speak(sentence, voice, speed), silence(PAUSE_SENTENCE)]
-            parts.append(silence(PAUSE_PARAGRAPH))
-            done_chars += len(para)
-            say(synth_start + (0.95 - synth_start) * done_chars / total_chars, f"Speaking: {title}")
-        parts.append(silence(PAUSE_CHAPTER))
-        chapters.append((title, np.concatenate(parts)))
-    tts_seconds = time.perf_counter() - t
-
-    say(0.96, "Encoding audio")
-    name = extract.document_title(str(pdf_path)) or Path(pdf_path).stem.replace("_", " ")
-    out = audio.export(chapters, out_path, title=name)
-    say(1.0, "Done")
-
-    return Report(
-        output=out,
-        chapters=[c for c, _ in chapters],
-        words=sum(len(p.split()) for _, paras in script for p in paras),
-        audio_seconds=sum(len(a) for _, a in chapters) / SAMPLE_RATE,
-        tts_seconds=tts_seconds,
-        script=script,
-        **stats,
+    script, stats = prepare(source, kind, mode, use_llm, llm, title, max_pages, progress)
+    prepare_seconds = time.perf_counter() - t
+    out, audio_seconds, tts_seconds, cues = speak(
+        script, out_path, voice, speed, synthesizer, progress, start=0.3 if (use_llm or mode != "full") else 0.05
     )
+    return Report(out, script, audio_seconds, tts_seconds, prepare_seconds, stats, llm.last_model if llm else None, cues)

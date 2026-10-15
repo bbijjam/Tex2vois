@@ -258,7 +258,17 @@ def document_title(pdf_path: str) -> str:
         if meta and not meta.lower().startswith(("microsoft word", "untitled")):
             return meta
         first = [l for l in _read_lines(doc, 1) if len(l.text) > 3]
-    return max(first, key=lambda l: l.size).text if first else ""
+    if not first:
+        return ""
+    # the title is the largest text, often wrapped over consecutive lines
+    top = max(l.size for l in first)
+    start = next(i for i, l in enumerate(first) if l.size == top)
+    parts = []
+    for l in first[start:]:
+        if l.size != top or len(parts) == 4:
+            break
+        parts.append(l.text)
+    return re.sub(r"[∗*†‡]+$", "", " ".join(parts)).strip()
 
 
 def extract(pdf_path: str, stop_at_references: bool = True, max_pages: int | None = None) -> list[Section]:

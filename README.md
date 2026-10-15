@@ -1,6 +1,6 @@
 # Tex2vois
 
-**Turn any PDF into a natural-sounding audiobook — fully offline, on a laptop.**
+**Listen to articles and research papers in a natural voice — speech runs on your laptop; the optional AI parts use free models.**
 
 Most "PDF to speech" tools read everything on the page: running headers, page numbers, `[12]`-style citations,
 author emails, figure labels, table cells. Tex2vois treats it as a pipeline problem: understand the page layout,
@@ -12,6 +12,18 @@ PDF ──► layout-aware extraction ──► rule-based cleanup ──► (op
          PyMuPDF                     regex                  Ollama + length guard            on-device        ffmpeg, loudnorm, chapters
 ```
 
+## Three ways to listen
+
+| | Input | What you get | AI needed? |
+|---|---|---|---|
+| **Article** | pasted text | the whole text, read naturally | no |
+| **Research paper** | PDF | **Summary** (~2 min) → **Skim** (key parts, ~⅙–⅓) → **Full** reading | summary/skim: yes (free); full: no |
+| **Book** | EPUB/PDF | chapter-by-chapter audiobook | *coming next* |
+
+Every paragraph has a stable id, and each skim paragraph records which full-text paragraph it came from;
+a `.cues.json` file next to the audio gives each paragraph's start time, so a player can jump from the
+skim straight into the full reading at the same point.
+
 ## Features
 
 - **Layout-aware extraction.** Drops repeated headers/footers and page numbers, author blocks above the
@@ -22,9 +34,15 @@ PDF ──► layout-aware extraction ──► rule-based cleanup ──► (op
   can't fake a heading), else detected by font size. Exported as real chapter markers in `.m4b`.
 - **Speakable text.** Removes numeric and author-year citations, URLs and emails; expands `e.g.`, `i.e.`,
   `Fig. 3`, `vs.` and friends.
-- **Optional LLM rewrite** with any Ollama model: verbalises math and symbols, smooths list/table fragments.
-  A **length guard** rejects any batch whose rewrite drifts outside 0.6–1.6× the original length, so the model
-  can never silently summarise or invent content — it can only fall back to the rule-cleaned text.
+- **Free AI, fact-checked.** Summaries, methods recaps and the optional "rewrite for listening" pass use free
+  OpenRouter models (falling back through a list when one is rate-limited) or a local Ollama model. Two guards:
+  a **length guard** (rewrite must stay within 0.6–1.6× the original) and a **fact guard** — every number,
+  gene/protein-style name (`HhCHC`, `dsRNA-CHC`, `AtMYB75`) and abbreviated species (`A. thaliana`) must survive a
+  rewrite, and a summary may not mention any number or name that is not in the paper. Anything that fails falls
+  back to the paper's own words (e.g. the abstract), and the app says so.
+- **Research-paper layouts.** Run-in headings ("1. Introduction. Life is…"), ALL-CAPS headings, bioRxiv margin line
+  numbers, superscript citation markers (exponents like N³ are kept and read as "N cubed"), and back matter
+  (acknowledgements, funding, author contributions, conflicts of interest) are all handled.
 - **Kokoro-82M** voices (Apache-2.0), 9 curated US/UK voices, adjustable speed.
 - **Audiobook output.** Loudness-normalised (−18 LUFS) M4B with chapters, MP3, or WAV; natural pauses between
   sentences, paragraphs and chapters.
@@ -75,15 +93,31 @@ tex2vois paper.pdf --pages 5 --script       # print exactly what would be read, 
 tex2vois --list-voices
 ```
 
-**Optional: LLM rewrite**
+**AI features (summary, skim, rewrite)**
+
+Option A — free cloud models via [OpenRouter](https://openrouter.ai) (no cost; free models are rate-limited):
+
+```bash
+cp .env.example .env            # then put your key in .env:  OPENROUTER_API_KEY=sk-or-v1-...
+```
+
+Only `:free` models are used unless you set `TEX2VOIS_ALLOW_PAID=1`. Override the model list with
+`TEX2VOIS_MODELS="model-a:free,model-b:free"` (the free catalogue changes often).
+
+Option B — fully local with [Ollama](https://ollama.com):
 
 ```bash
 ollama pull qwen2.5:7b          # 16 GB RAM; use llama3.2:3b on 8 GB machines
-tex2vois paper.pdf --llm        # or --llm --model llama3.2:3b
+export TEX2VOIS_LLM=ollama
 ```
 
-Small models (1–3B) handle symbols like `√dk` → "the square root of dk" but struggle with full equations; 7B+
-is noticeably better.
+```bash
+tex2vois paper.pdf --mode summary           # ~2 minute spoken summary
+tex2vois paper.pdf --mode skim --script     # print the skim, no audio
+tex2vois paper.pdf --rewrite                # full reading, smoothed for listening (slow)
+tex2vois paper.pdf --mode skim --no-llm     # skim from the paper's own words only
+pbpaste | tex2vois - -o article.mp3         # an article from the clipboard
+```
 
 ## Project layout
 
@@ -91,10 +125,13 @@ is noticeably better.
 src/tex2vois/
   extract.py    PDF -> sections (layout heuristics)
   clean.py      rule-based cleanup for speech
-  rewrite.py    optional Ollama rewrite + length guard
+  script.py     Script/Chapter/Para model; from_pdf, from_text (articles)
+  modes.py      paper modes: full, skim, summary
+  llm.py        OpenRouter (free models, fallback) / Ollama client, .env loading
+  rewrite.py    optional LLM rewrite + length and fact guards
   tts.py        Kokoro synthesis, sentence chunking, voices
   audio.py      ffmpeg assembly: loudnorm, chapters, M4B/MP3/WAV
-  pipeline.py   end-to-end orchestration + timing report
+  pipeline.py   load -> mode -> rewrite -> speech; timing report and .cues.json
   cli.py        `tex2vois` command
 app.py          Gradio web UI
 tests/          pytest suite (generated PDFs, ffprobe-verified chapters)
@@ -112,7 +149,10 @@ pytest
 - [ ] Word-level highlighting in the UI via Whisper alignment
 - [ ] MLX backend for Apple Silicon
 - [ ] Docker image + Hugging Face Space demo
-- [ ] EPUB and web-article input
+- [ ] Book mode: EPUB input, background generation that can pause and resume
+- [ ] Player that switches between skim and full at the same paragraph (uses `.cues.json`)
+- [ ] "Paste a DOI": fetch open full-text XML from Europe PMC / bioRxiv before falling back to the PDF
+- [ ] Pronunciation lexicon for species, genes and reagents (plant and molecular biology first)
 
 ## License
 

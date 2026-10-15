@@ -1,8 +1,7 @@
-import json
 
 import pytest
 
-from tex2vois import clean, extract, pipeline, rewrite
+from tex2vois import clean, extract, pipeline
 from tex2vois.tts import split_sentences
 
 
@@ -22,7 +21,7 @@ def test_extract_keeps_references_when_asked(sample_pdf):
 
 def test_prepare_script(sample_pdf):
     script, _ = pipeline.prepare(sample_pdf)
-    text = " ".join(p for _, paras in script for p in paras)
+    text = " ".join(p.text for c in script.chapters for p in c.paras)
     assert "[1, 2]" not in text
     assert "Smith et al" not in text and "Lee & Park" not in text
     assert "https://" not in text
@@ -59,10 +58,12 @@ def test_split_sentences_respects_limit():
     assert " ".join(chunks).split() == text.split()
 
 
-def test_rewrite_length_guard(monkeypatch):
-    replies = iter(["A faithful spoken version of the passage, roughly the same length.", "Too short."])
-    monkeypatch.setattr(rewrite, "_generate", lambda *a, **k: next(replies))
-    paras = ["A faithful written version of the passage, roughly the same length.", "x" * 1600]
-    out, batches, rejected = rewrite.rewrite_paragraphs(paras, max_chars=100)
-    assert batches == 2 and rejected == 1
-    assert out == ["A faithful spoken version of the passage, roughly the same length.", "x" * 1600]
+def test_rewrite_guards():
+    from tex2vois.rewrite import accept, missing_facts
+
+    orig = "HhCHC fell 3-fold (p < 0.001, n = 3) after 72 h in A. thaliana and dsRNA-CHC fed nymphs."
+    good = "HhCHC fell threefold, p less than 0.001 with n equals 3, after 72 hours in A. thaliana and dsRNA\u2011CHC fed nymphs."
+    assert accept(orig, good) == (True, "")
+    assert missing_facts(orig, good.replace("72", "48")) == {"72"}  # changed number
+    assert "HhCHC" in missing_facts(orig, good.replace("HhCHC", "the gene"))  # dropped gene name
+    assert accept(orig, "Short.")[1] == "length"
