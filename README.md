@@ -1,16 +1,96 @@
 # Tex2vois
 
-**Listen to articles and research papers in a natural voice — speech runs on your laptop; the optional AI parts use free models.**
+**Listen to articles, research papers and books in a natural voice, and follow along with live captions.
+Speech runs on your own computer; the optional AI parts use free models.**
 
 Most "PDF to speech" tools read everything on the page: running headers, page numbers, `[12]`-style citations,
 author emails, figure labels, table cells. Tex2vois treats it as a pipeline problem: understand the page layout,
 keep only what a human narrator would read, optionally let a local LLM make it speakable, then synthesise it
 with a small, high-quality neural voice and package it as an audiobook with chapters.
 
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph IN["① What you give it"]
+        direction LR
+        A["📰 Pasted text"]
+        P["🔬 Research paper (PDF)"]
+        B["📚 Book (EPUB / text / PDF)"]
+    end
+
+    subgraph READ["② Read and clean"]
+        direction LR
+        T["script.py<br/>paragraphs and # headings"]
+        X["extract.py<br/>PDF layout: headings, line numbers,<br/>citations, figures, back matter"]
+        E["book.py<br/>EPUB contents, Gutenberg text,<br/>skips cover and contents pages"]
+        C["clean.py<br/>speakable text<br/>e.g. → for example, N³ → N cubed"]
+        T --> C
+        X --> C
+        E --> C
+    end
+
+    S[("Script<br/>chapters → paragraphs → sentences<br/>each with a stable id")]
+
+    subgraph AI["③ Optional AI help (free models)"]
+        direction LR
+        M["modes.py<br/>summary · highlights · full"]
+        R["rewrite.py<br/>tricky parts → plain words"]
+        L["llm.py<br/>OpenRouter free models<br/>with fallback, or Ollama"]
+        G{{"Fact check<br/>numbers, genes, species<br/>must match the source;<br/>otherwise keep the original"}}
+        M --> R
+        M -.- L
+        R -.- L
+        L -.- G
+    end
+
+    subgraph SPEAK["④ Speak"]
+        direction LR
+        J["book.py<br/>one chapter at a time<br/>pause / resume"]
+        K["tts.py<br/>Kokoro-82M voice<br/>sentence by sentence"]
+        Q["pipeline.py<br/>pauses + exact timing<br/>of every sentence"]
+        O["audio.py · ffmpeg<br/>loudness, chapters<br/>audiobook or MP3"]
+        J --> K --> Q --> O
+    end
+
+    subgraph UI["⑤ Listen (app.py)"]
+        direction LR
+        PL["player.py<br/>audio + live captions<br/>auto-scroll, click to jump"]
+        N["Notes<br/>mark this moment,<br/>download as a file"]
+        PL --- N
+    end
+
+    A --> T
+    P --> X
+    B --> E
+    C --> S
+    S --> AI
+    AI --> SPEAK
+    S -->|"full reading, articles, books"| SPEAK
+    O --> PL
+    Q -->|"caption timings"| PL
 ```
-PDF ──► layout-aware extraction ──► rule-based cleanup ──► (optional) local LLM rewrite ──► Kokoro-82M TTS ──► M4B / MP3
-         PyMuPDF                     regex                  Ollama + length guard            on-device        ffmpeg, loudnorm, chapters
-```
+
+**How a request flows:** every input becomes the same `Script` (chapters of paragraphs). For papers, `modes.py`
+can turn it into a summary or highlights; anything an AI model writes is fact-checked, and if a check fails the
+original wording is used instead. `pipeline.speak` then synthesises one sentence at a time, recording exactly
+when each sentence starts and ends, which is what drives the live captions. Books go through the same path one
+chapter at a time, with a manifest on disk so generation can pause and resume.
+
+| Module | Job |
+|---|---|
+| `extract.py` | PDF → sections (outline, run-in and ALL-CAPS headings, margin line numbers, superscript citations, figures, back matter) |
+| `clean.py` | Rule-based cleanup so text reads well aloud |
+| `script.py` | The `Script` / `Chapter` / `Para` model; pasted-text loader |
+| `book.py` | EPUB and plain-text books; resumable chapter-by-chapter generation; final audiobook assembly |
+| `modes.py` | Paper summary, highlights (skim) and full reading |
+| `llm.py` | One client for OpenRouter free models (with fallback) or local Ollama; reads `.env` |
+| `rewrite.py` | Optional AI rewrite with length and fact guards |
+| `tts.py` | Kokoro-82M voices, sentence splitting |
+| `pipeline.py` | Load → mode → rewrite → speech; timings, captions and cues |
+| `audio.py` | ffmpeg export: loudness normalisation, chapter markers, m4b / mp3 / wav |
+| `player.py` | Caption player and notes pad (HTML + one page script) |
+| `app.py` | The web app (Gradio): Article, Paper and Book tabs |
 
 ## Three ways to listen
 
@@ -18,7 +98,11 @@ PDF ──► layout-aware extraction ──► rule-based cleanup ──► (op
 |---|---|---|---|
 | **Article** | pasted text | the whole text, read naturally | no |
 | **Research paper** | PDF | **Summary** (~2 min) → **Skim** (key parts, ~⅙–⅓) → **Full** reading | summary/skim: yes (free); full: no |
-| **Book** | EPUB/PDF | chapter-by-chapter audiobook | *coming next* |
+| **Book** | EPUB, plain text (e.g. Project Gutenberg) or PDF | chapter-by-chapter audiobook; listen while the rest is prepared; pause and resume | no |
+
+While listening, the words light up as they are read and the caption box scrolls with the audio (click a
+sentence to jump there). A notes pad sits next to the player: **Mark this moment** adds the time and the
+sentence being read, and the download button saves your notes as a text file.
 
 Every paragraph has a stable id, and each skim paragraph records which full-text paragraph it came from;
 a `.cues.json` file next to the audio gives each paragraph's start time, so a player can jump from the
@@ -91,6 +175,8 @@ tex2vois paper.pdf                          # -> paper.m4b with chapters
 tex2vois paper.pdf -o paper.mp3 -v bm_george -s 1.1
 tex2vois paper.pdf --pages 5 --script       # print exactly what would be read, no audio
 tex2vois --list-voices
+tex2vois novel.epub                         # audiobook, chapter by chapter (Ctrl+C, rerun to resume)
+tex2vois novel.epub --chapters 1-3          # just the first three chapters
 ```
 
 **AI features (summary, skim, rewrite)**
@@ -119,23 +205,7 @@ tex2vois paper.pdf --mode skim --no-llm     # skim from the paper's own words on
 pbpaste | tex2vois - -o article.mp3         # an article from the clipboard
 ```
 
-## Project layout
-
-```
-src/tex2vois/
-  extract.py    PDF -> sections (layout heuristics)
-  clean.py      rule-based cleanup for speech
-  script.py     Script/Chapter/Para model; from_pdf, from_text (articles)
-  modes.py      paper modes: full, skim, summary
-  llm.py        OpenRouter (free models, fallback) / Ollama client, .env loading
-  rewrite.py    optional LLM rewrite + length and fact guards
-  tts.py        Kokoro synthesis, sentence chunking, voices
-  audio.py      ffmpeg assembly: loudnorm, chapters, M4B/MP3/WAV
-  pipeline.py   load -> mode -> rewrite -> speech; timing report and .cues.json
-  cli.py        `tex2vois` command
-app.py          Gradio web UI
-tests/          pytest suite (generated PDFs, ffprobe-verified chapters)
-```
+## Tests
 
 ```bash
 pytest
@@ -149,8 +219,9 @@ pytest
 - [ ] Word-level highlighting in the UI via Whisper alignment
 - [ ] MLX backend for Apple Silicon
 - [ ] Docker image + Hugging Face Space demo
-- [ ] Book mode: EPUB input, background generation that can pause and resume
-- [ ] Player that switches between skim and full at the same paragraph (uses `.cues.json`)
+- [x] Book mode: EPUB / text input, chapter-by-chapter generation that can pause and resume
+- [x] Live captions and a notes pad
+- [ ] Switch between highlights and the full reading at the same paragraph (uses `.cues.json`)
 - [ ] "Paste a DOI": fetch open full-text XML from Europe PMC / bioRxiv before falling back to the PDF
 - [ ] Pronunciation lexicon for species, genes and reagents (plant and molecular biology first)
 

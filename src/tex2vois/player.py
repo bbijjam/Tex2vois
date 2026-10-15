@@ -65,12 +65,11 @@ DOWNLOAD_ICON = (
 NOTES = f"""
 <div class="t2v-notes">
   <div class="t2v-notes-bar">
-    <strong>Notes</strong>
-    <button type="button" class="t2v-icon-btn" data-t2v="stamp" title="Insert the current time and sentence">📍 Timestamp</button>
-    <button type="button" class="t2v-icon-btn" data-t2v="download" title="Download notes" aria-label="Download notes">{DOWNLOAD_ICON}</button>
+    <strong>Your notes</strong>
+    <button type="button" class="t2v-icon-btn" data-t2v="stamp" title="Add the current moment to your notes">📍 Mark this moment</button>
+    <button type="button" class="t2v-icon-btn" data-t2v="download" title="Save your notes to your computer" aria-label="Save notes">{DOWNLOAD_ICON}</button>
   </div>
-  <textarea class="t2v-notes-text" placeholder="Type notes while you listen. They are kept in this browser until you clear them; use the download button to save a copy."></textarea>
-  <div class="t2v-hint">Saved as a Markdown (.md) file that opens in any text editor.</div>
+  <textarea class="t2v-notes-text" placeholder="Jot down thoughts while you listen. Your notes stay in this browser, and the download button saves a copy."></textarea>
 </div>
 """
 
@@ -125,30 +124,36 @@ JS = r"""
 
   // ---- notes: kept in this browser (localStorage), downloadable as Markdown ----
   const NOTES_KEY = 't2v-notes';
-  const notesBox = () => document.querySelector('.t2v-notes-text');
+  const allBoxes = () => [...document.querySelectorAll('.t2v-notes-text')];
+  const notesBox = (from) => (from && from.closest('.t2v-notes')?.querySelector('.t2v-notes-text')) || allBoxes()[0];
+  const syncAll = (value, except) => allBoxes().forEach(b => { if (b !== except) b.value = value; });
   const store = {
     get() { try { return localStorage.getItem(NOTES_KEY) || ''; } catch (e) { return ''; } },
     set(v) { try { localStorage.setItem(NOTES_KEY, v); } catch (e) {} },
   };
   // the notes panel may render after this script runs
   new MutationObserver(() => {
-    const box = notesBox();
-    if (box && !box.dataset.t2vReady) { box.dataset.t2vReady = '1'; box.value = store.get(); }
+    allBoxes().forEach(box => {
+      if (!box.dataset.t2vReady) { box.dataset.t2vReady = '1'; box.value = store.get(); }
+    });
   }).observe(document.documentElement, { childList: true, subtree: true });
   document.addEventListener('input', e => {
-    if (e.target.classList && e.target.classList.contains('t2v-notes-text')) store.set(e.target.value);
+    if (e.target.classList && e.target.classList.contains('t2v-notes-text')) {
+      store.set(e.target.value);
+      syncAll(e.target.value, e.target);
+    }
   });
 
   const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   const activePlayer = () => {
-    const all = [...document.querySelectorAll('.t2v-player')].filter(p => p.offsetParent !== null);
+    const all = [...document.querySelectorAll('.t2v-player')].filter(p => p.offsetParent !== null);  // visible tab only
     return all.find(p => !p.querySelector('audio').paused) || all[all.length - 1];
   };
 
   document.addEventListener('click', e => {
     const btn = e.target.closest && e.target.closest('[data-t2v]');
     if (!btn) return;
-    const box = notesBox();
+    const box = notesBox(btn);
     if (!box) return;
     if (btn.dataset.t2v === 'stamp') {
       const p = activePlayer();
@@ -165,15 +170,16 @@ JS = r"""
       box.selectionStart = box.selectionEnd = before.length + insert.length;
       box.focus();
       store.set(box.value);
+      syncAll(box.value, box);
     }
     if (btn.dataset.t2v === 'download') {
       const p = activePlayer();
       const title = p ? p.querySelector('audio').getAttribute('aria-label') : 'Tex2vois';
       const date = new Date().toISOString().slice(0, 10);
-      const body = `# Notes: ${title}\n\n_${date}_\n\n${box.value.trim()}\n`;
+      const body = `Notes: ${title}\n${date}\n\n${box.value.trim()}\n`;
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([body], { type: 'text/markdown' }));
-      a.download = `notes-${title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'tex2vois'}-${date}.md`;
+      a.href = URL.createObjectURL(new Blob([body], { type: 'text/plain' }));
+      a.download = `notes-${title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'tex2vois'}-${date}.txt`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     }
@@ -213,6 +219,6 @@ def render(audio_url: str, captions: list[dict], title: str = "") -> str:
         f'<div class="t2v-player">'
         f'<audio controls preload="metadata" src="{html.escape(audio_url, quote=True)}" aria-label="{label}"></audio>'
         f'<div class="t2v-captions" tabindex="0" aria-label="Captions">{"".join(body)}</div>'
-        f'<div class="t2v-hint">Captions follow the audio. Click any sentence to jump to it.</div>'
+        f'<div class="t2v-hint">The words light up as they are read. Click any sentence to jump to it.</div>'
         f"</div>"
     )

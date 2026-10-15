@@ -10,7 +10,7 @@ from typing import Callable
 
 import numpy as np
 
-from . import audio, modes
+from . import audio, book, modes
 from .llm import LLM
 from .rewrite import RewriteStats, rewrite_script
 from .script import Script, from_pdf, from_text
@@ -63,10 +63,14 @@ class Report:
 def load(source: str | Path, kind: str = "auto", title: str | None = None, max_pages: int | None = None) -> Script:
     """A PDF path, a .txt/.md path, or raw pasted text."""
     path = Path(source) if isinstance(source, Path) or (len(str(source)) < 1024 and "\n" not in str(source)) else None
-    if path is not None and path.suffix.lower() == ".pdf":
+    if path is not None and path.suffix.lower() == ".epub":
+        script = book.from_epub(path)
+    elif path is not None and path.suffix.lower() == ".pdf":
         script = from_pdf(str(path), max_pages=max_pages)
     elif path is not None and path.suffix.lower() in (".txt", ".md") and path.exists():
-        script = from_text(path.read_text(encoding="utf-8", errors="replace"), title or path.stem)
+        text = path.read_text(encoding="utf-8", errors="replace")
+        script = book.from_book_text(text, title) if kind == "book" or (kind == "auto" and book.looks_like_book(text)) \
+            else from_text(text, title or path.stem)
     else:
         script = from_text(str(source), title)
     if kind != "auto":
