@@ -33,6 +33,7 @@ class Report:
     rewrite: RewriteStats | None = None
     llm_model: str | None = None
     cues: list[dict] = field(default_factory=list, repr=False)
+    captions: list[dict] = field(default_factory=list, repr=False)
 
     @property
     def rtf(self) -> float:
@@ -107,36 +108,57 @@ def speak(
     synthesizer: Synthesizer | None = None,
     progress: Progress | None = None,
     start: float = 0.3,
-) -> tuple[Path, float, float, list[dict]]:
+) -> tuple[Path, float, float, list[dict], list[dict]]:
+    """Synthesise the script. Returns (file, audio seconds, synthesis seconds, paragraph cues, sentence captions).
+
+    Captions carry the exact start/end of every spoken sentence (and chapter title),
+    measured from the samples we generate, for synced on-screen captions.
+    """
     say = progress or (lambda f, m: None)
     tts = synthesizer or Synthesizer()
     total = sum(len(p.text) for c in script.chapters for p in c.paras) or 1
-    done, cues, offset = 0, [], 0
+    done, cues, captions = 0, [], []
+    offset = 0  # samples written so far, across chapters
     t = time.perf_counter()
     chapters: list[tuple[str, np.ndarray]] = []
-    for ch in script.chapters:
-        parts = [tts.speak(ch.title + ".", voice, speed), silence(PAUSE_CHAPTER * 0.6)]
-        chapter_start = offset
-        offset += sum(len(x) for x in parts)
+
+    def sec(samples: int) -> float:
+        return round(samples / SAMPLE_RATE, 3)
+
+    for ci, ch in enumerate(script.chapters):
+        parts: list[np.ndarray] = []
+
+        def add(chunk: np.ndarray) -> None:
+            nonlocal offset
+            parts.append(chunk)
+            offset += len(chunk)
+
+        title_audio = tts.speak(ch.title + ".", voice, speed)
+        captions.append({"start": sec(offset), "end": sec(offset + len(title_audio)), "text": ch.title, "kind": "title", "chapter": ci})
+        add(title_audio)
+        add(silence(PAUSE_CHAPTER * 0.6))
         for para in ch.paras:
-            cues.append({"id": para.id, "source": para.source, "chapter": ch.title, "start": round(offset / SAMPLE_RATE, 2)})
+            cues.append({"id": para.id, "source": para.source, "chapter": ch.title, "start": sec(offset)})
             for sentence in split_sentences(para.text):
                 say(start + (0.95 - start) * done / total, f"Speaking: {ch.title}")  # also a stop point
-                parts += [tts.speak(sentence, voice, speed), silence(PAUSE_SENTENCE)]
-            parts.append(silence(PAUSE_PARAGRAPH))
-            offset = chapter_start + sum(len(x) for x in parts)
+                spoken = tts.speak(sentence, voice, speed)
+                captions.append({"start": sec(offset), "end": sec(offset + len(spoken)), "text": sentence, "kind": "text", "chapter": ci, "para": para.id})
+                add(spoken)
+                add(silence(PAUSE_SENTENCE))
+            add(silence(PAUSE_PARAGRAPH))
             done += len(para.text)
             say(start + (0.95 - start) * done / total, f"Speaking: {ch.title}")
-        parts.append(silence(PAUSE_CHAPTER))
-        offset = chapter_start + sum(len(x) for x in parts)
+        add(silence(PAUSE_CHAPTER))
         chapters.append((ch.title, np.concatenate(parts)))
     tts_seconds = time.perf_counter() - t
 
     say(0.96, "Encoding audio")
     out = audio.export(chapters, out_path, title=script.title)
-    out.with_suffix(".cues.json").write_text(json.dumps({"title": script.title, "mode": script.mode, "cues": cues}, indent=1))
+    out.with_suffix(".cues.json").write_text(
+        json.dumps({"title": script.title, "mode": script.mode, "cues": cues, "captions": captions}, indent=1)
+    )
     say(1.0, "Done")
-    return out, sum(len(a) for _, a in chapters) / SAMPLE_RATE, tts_seconds, cues
+    return out, offset / SAMPLE_RATE, tts_seconds, cues, captions
 
 
 def convert(
@@ -156,7 +178,7 @@ def convert(
     t = time.perf_counter()
     script, stats = prepare(source, kind, mode, use_llm, llm, title, max_pages, progress)
     prepare_seconds = time.perf_counter() - t
-    out, audio_seconds, tts_seconds, cues = speak(
+    out, audio_seconds, tts_seconds, cues, captions = speak(
         script, out_path, voice, speed, synthesizer, progress, start=0.3 if (use_llm or mode != "full") else 0.05
     )
-    return Report(out, script, audio_seconds, tts_seconds, prepare_seconds, stats, llm.last_model if llm else None, cues)
+    return Report(out, script, audio_seconds, tts_seconds, prepare_seconds, stats, llm.last_model if llm else None, cues, captions)

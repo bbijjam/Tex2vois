@@ -1,0 +1,218 @@
+"""Audio player with synced, auto-scrolling captions.
+
+`render()` returns static HTML (an <audio> element plus the transcript, one
+<span> per spoken sentence carrying its start/end time). `JS` holds one
+global script (passed to Gradio's launch(js=...), which runs it on page load) that drives every player on the page: media events don't bubble
+but they do reach capturing listeners on `document`, so no per-render script
+execution is needed. Clicking a sentence seeks to it; manual scrolling pauses
+auto-scroll for a few seconds.
+"""
+
+from __future__ import annotations
+
+import html
+from itertools import groupby
+
+CSS = """
+.t2v-player { display: flex; flex-direction: column; gap: 10px; }
+.t2v-player audio { width: 100%; }
+.t2v-captions {
+  height: 25vh; min-height: 160px; overflow-y: auto; padding: 12px 16px;
+  border: 1px solid var(--border-color-primary, #d0d0d0); border-radius: 10px;
+  background: var(--block-background-fill, transparent);
+  font-size: 1.05rem; line-height: 1.7; color: var(--body-text-color, inherit);
+  scroll-behavior: smooth;
+}
+.t2v-captions h4 { margin: 14px 0 4px; font-size: 0.95rem; opacity: 0.75; text-transform: none; }
+.t2v-captions h4:first-child { margin-top: 0; }
+.t2v-captions p { margin: 0 0 10px; padding: 2px 4px; border-radius: 6px; transition: background 0.2s; }
+.t2v-captions p.t2v-para-on { background: color-mix(in srgb, var(--color-accent, #f97316) 8%, transparent); }
+.t2v-captions .t2v-s { cursor: pointer; border-radius: 4px; transition: background 0.15s, color 0.15s; }
+.t2v-captions .t2v-s:hover { text-decoration: underline dotted; }
+.t2v-captions .t2v-s.t2v-on {
+  background: color-mix(in srgb, var(--color-accent, #f97316) 30%, transparent);
+  color: var(--body-text-color, inherit);
+}
+.t2v-captions h4.t2v-on { opacity: 1; color: var(--color-accent, #f97316); }
+.t2v-hint { font-size: 0.8rem; opacity: 0.65; }
+
+.t2v-notes { display: flex; flex-direction: column; gap: 8px; }
+.t2v-notes-bar { display: flex; align-items: center; gap: 8px; }
+.t2v-notes-bar strong { flex: 1; font-size: 1rem; }
+.t2v-notes textarea {
+  width: 100%; box-sizing: border-box; height: 25vh; min-height: 160px; resize: vertical;
+  padding: 10px 12px; border-radius: 10px; font: inherit; font-size: 0.95rem; line-height: 1.5;
+  border: 1px solid var(--border-color-primary, #d0d0d0);
+  background: var(--input-background-fill, var(--block-background-fill, transparent));
+  color: var(--body-text-color, inherit);
+}
+.t2v-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 36px; height: 36px; padding: 0 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border-color-primary, #d0d0d0);
+  background: var(--button-secondary-background-fill, transparent);
+  color: var(--body-text-color, inherit); font: inherit; font-size: 0.85rem;
+}
+.t2v-icon-btn:hover { border-color: var(--color-accent, #f97316); }
+.t2v-icon-btn svg { width: 18px; height: 18px; }
+"""
+
+DOWNLOAD_ICON = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+    'stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>'
+)
+
+NOTES = f"""
+<div class="t2v-notes">
+  <div class="t2v-notes-bar">
+    <strong>Notes</strong>
+    <button type="button" class="t2v-icon-btn" data-t2v="stamp" title="Insert the current time and sentence">📍 Timestamp</button>
+    <button type="button" class="t2v-icon-btn" data-t2v="download" title="Download notes" aria-label="Download notes">{DOWNLOAD_ICON}</button>
+  </div>
+  <textarea class="t2v-notes-text" placeholder="Type notes while you listen. They are kept in this browser until you clear them; use the download button to save a copy."></textarea>
+  <div class="t2v-hint">Saved as a Markdown (.md) file that opens in any text editor.</div>
+</div>
+"""
+
+JS = r"""
+() => {
+  if (window.__t2vPlayer) return;
+  window.__t2vPlayer = true;
+  const pauseUntil = new WeakMap();
+
+  function update(audio) {
+    const root = audio.closest('.t2v-player');
+    if (!root) return;
+    const box = root.querySelector('.t2v-captions');
+    const t = audio.currentTime;
+    let current = null;
+    for (const el of box.querySelectorAll('[data-start]')) {
+      if (t >= +el.dataset.start) current = el; else break;
+    }
+    const prev = box.querySelector('.t2v-on');
+    if (current === prev) return;
+    if (prev) prev.classList.remove('t2v-on');
+    box.querySelectorAll('.t2v-para-on').forEach(p => p.classList.remove('t2v-para-on'));
+    if (!current) return;
+    current.classList.add('t2v-on');
+    const para = current.closest('p');
+    if (para) para.classList.add('t2v-para-on');
+    if ((pauseUntil.get(box) || 0) < Date.now()) {
+      const top = current.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - box.clientHeight / 3;
+      box.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    }
+  }
+
+  document.addEventListener('timeupdate', e => {
+    if (e.target.matches && e.target.matches('.t2v-player audio')) update(e.target);
+  }, true);
+  document.addEventListener('seeked', e => {
+    if (e.target.matches && e.target.matches('.t2v-player audio')) {
+      const box = e.target.closest('.t2v-player').querySelector('.t2v-captions');
+      pauseUntil.delete(box);
+      update(e.target);
+    }
+  }, true);
+
+  // click a sentence to jump there
+  document.addEventListener('click', e => {
+    const s = e.target.closest && e.target.closest('.t2v-player [data-start]');
+    if (!s) return;
+    const audio = s.closest('.t2v-player').querySelector('audio');
+    audio.currentTime = +s.dataset.start + 0.01;
+    audio.play();
+  });
+
+  // ---- notes: kept in this browser (localStorage), downloadable as Markdown ----
+  const NOTES_KEY = 't2v-notes';
+  const notesBox = () => document.querySelector('.t2v-notes-text');
+  const store = {
+    get() { try { return localStorage.getItem(NOTES_KEY) || ''; } catch (e) { return ''; } },
+    set(v) { try { localStorage.setItem(NOTES_KEY, v); } catch (e) {} },
+  };
+  // the notes panel may render after this script runs
+  new MutationObserver(() => {
+    const box = notesBox();
+    if (box && !box.dataset.t2vReady) { box.dataset.t2vReady = '1'; box.value = store.get(); }
+  }).observe(document.documentElement, { childList: true, subtree: true });
+  document.addEventListener('input', e => {
+    if (e.target.classList && e.target.classList.contains('t2v-notes-text')) store.set(e.target.value);
+  });
+
+  const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  const activePlayer = () => {
+    const all = [...document.querySelectorAll('.t2v-player')].filter(p => p.offsetParent !== null);
+    return all.find(p => !p.querySelector('audio').paused) || all[all.length - 1];
+  };
+
+  document.addEventListener('click', e => {
+    const btn = e.target.closest && e.target.closest('[data-t2v]');
+    if (!btn) return;
+    const box = notesBox();
+    if (!box) return;
+    if (btn.dataset.t2v === 'stamp') {
+      const p = activePlayer();
+      let line = '- ';
+      if (p) {
+        const t = p.querySelector('audio').currentTime;
+        const s = p.querySelector('.t2v-on');
+        line = `- [${fmt(t)}]` + (s ? ` "${s.textContent.trim()}"` : '') + ' ';
+      }
+      const at = box.selectionStart ?? box.value.length;
+      const before = box.value.slice(0, at), after = box.value.slice(at);
+      const insert = (before && !before.endsWith('\n') ? '\n' : '') + line;
+      box.value = before + insert + after;
+      box.selectionStart = box.selectionEnd = before.length + insert.length;
+      box.focus();
+      store.set(box.value);
+    }
+    if (btn.dataset.t2v === 'download') {
+      const p = activePlayer();
+      const title = p ? p.querySelector('audio').getAttribute('aria-label') : 'Tex2vois';
+      const date = new Date().toISOString().slice(0, 10);
+      const body = `# Notes: ${title}\n\n_${date}_\n\n${box.value.trim()}\n`;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([body], { type: 'text/markdown' }));
+      a.download = `notes-${title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'tex2vois'}-${date}.md`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+  });
+
+  // the reader scrolled by hand: let them look around for a few seconds
+  for (const type of ['wheel', 'touchmove', 'keydown']) {
+    document.addEventListener(type, e => {
+      const box = e.target.closest && e.target.closest('.t2v-captions');
+      if (box) pauseUntil.set(box, Date.now() + 4000);
+    }, { capture: true, passive: true });
+  }
+}
+"""
+
+
+def _attr(seconds: float) -> str:
+    return f"{seconds:.3f}"
+
+
+def render(audio_url: str, captions: list[dict], title: str = "") -> str:
+    """HTML for the player. `captions` come from pipeline.speak()."""
+    body: list[str] = []
+    for chapter, items in groupby(captions, key=lambda c: c["chapter"]):
+        items = list(items)
+        for c in items:
+            if c["kind"] == "title":
+                body.append(f'<h4 data-start="{_attr(c["start"])}">{html.escape(c["text"])}</h4>')
+        for _, sentences in groupby((c for c in items if c["kind"] == "text"), key=lambda c: c["para"]):
+            spans = " ".join(
+                f'<span class="t2v-s" data-start="{_attr(c["start"])}" data-end="{_attr(c["end"])}">{html.escape(c["text"])}</span>'
+                for c in sentences
+            )
+            body.append(f"<p>{spans}</p>")
+    label = html.escape(title) if title else "Tex2vois audio"
+    return (
+        f'<div class="t2v-player">'
+        f'<audio controls preload="metadata" src="{html.escape(audio_url, quote=True)}" aria-label="{label}"></audio>'
+        f'<div class="t2v-captions" tabindex="0" aria-label="Captions">{"".join(body)}</div>'
+        f'<div class="t2v-hint">Captions follow the audio. Click any sentence to jump to it.</div>'
+        f"</div>"
+    )

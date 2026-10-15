@@ -5,6 +5,7 @@ Run:  python app.py   (then open http://127.0.0.1:7860)
 
 from __future__ import annotations
 
+import mimetypes
 import re
 import tempfile
 import time
@@ -12,7 +13,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from tex2vois import pipeline
+from tex2vois import pipeline, player
 from tex2vois.llm import LLM, LLMError
 from tex2vois.tts import DEFAULT_VOICE, VOICES, Synthesizer
 
@@ -23,6 +24,8 @@ STOP_REQUESTED: set[str] = set()  # session ids whose user pressed Stop
 class Stopped(Exception):
     pass
 OUT_DIR = Path(tempfile.gettempdir()) / "tex2vois"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+mimetypes.add_type("audio/mp4", ".m4b")  # so browsers play chapterised audiobooks inline
 PREVIEW_TEXT = "Hi! I'll be reading for you today. Sit back and enjoy."
 MODE_LABELS = {
     "Summary (about 2 minutes)": "summary",
@@ -72,7 +75,8 @@ def _run(source, kind, mode, voice, speed, rewrite, fmt, max_pages, progress, se
         STOP_REQUESTED.discard(session)
     notes = "".join(f"\n> ⚠️ {n}" for n in report.script.notes)
     stats = f"```\n{report.summary()}\n```{notes}"
-    return str(report.output), str(report.output), stats, report.script.to_markdown()
+    url = f"/gradio_api/file={report.output.resolve()}"
+    return player.render(url, report.captions, report.script.title), str(report.output), stats
 
 
 def run_article(text, voice, speed, rewrite, fmt, request: gr.Request, progress=gr.Progress()):
@@ -94,12 +98,10 @@ def stop(request: gr.Request):
 
 def outputs():
     with gr.Column():
-        player = gr.Audio(label="Listen", interactive=False)
-        download = gr.File(label="Download")
+        listen = gr.HTML(label="Listen", value='<div class="t2v-hint">Your audio and live captions will appear here.</div>')
+        download = gr.File(label="Download audio")
         stats = gr.Markdown()
-        with gr.Accordion("What was read aloud", open=False):
-            script = gr.Markdown()
-    return [player, download, stats, script]
+    return [listen, download, stats]
 
 
 with gr.Blocks(title="Tex2vois") as demo:
@@ -145,6 +147,8 @@ with gr.Blocks(title="Tex2vois") as demo:
     with gr.Tab("Book (coming soon)"):
         gr.Markdown("EPUB and PDF books with chapter-by-chapter generation that can pause and resume. Next on the roadmap.")
 
+    gr.HTML(player.NOTES)  # one notes pad for the whole page, kept while switching tabs
+
 
 if __name__ == "__main__":
-    demo.queue().launch()
+    demo.queue().launch(js=player.JS, css=player.CSS, allowed_paths=[str(OUT_DIR)])
