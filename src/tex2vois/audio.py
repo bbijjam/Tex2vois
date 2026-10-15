@@ -15,6 +15,20 @@ from .tts import SAMPLE_RATE
 FORMATS = ("m4b", "mp3", "wav")
 
 
+def ffmpeg() -> str:
+    """Path to ffmpeg: the system one if installed, else the copy bundled with imageio-ffmpeg
+    (so no Homebrew or admin rights are needed)."""
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except (ImportError, RuntimeError) as e:
+        raise RuntimeError("ffmpeg not found. Run ./setup.sh again, or install ffmpeg.") from e
+
+
 def _escape(value: str) -> str:
     for ch in ("\\", "=", ";", "#", "\n"):
         value = value.replace(ch, "\\" + ch)
@@ -44,8 +58,6 @@ def export(chapters: list[tuple[str, np.ndarray]], out_path: str | Path, title: 
         sf.write(out_path, audio, SAMPLE_RATE)
         return out_path
 
-    if not shutil.which("ffmpeg"):
-        raise RuntimeError("ffmpeg not found. Install it with: brew install ffmpeg")
 
     codec = ["-c:a", "aac", "-b:a", "64k", "-f", "mp4"] if fmt == "m4b" else ["-c:a", "libmp3lame", "-q:a", "4", "-id3v2_version", "3"]
     with tempfile.TemporaryDirectory() as tmp:
@@ -53,7 +65,7 @@ def export(chapters: list[tuple[str, np.ndarray]], out_path: str | Path, title: 
         sf.write(wav, audio, SAMPLE_RATE)
         meta.write_text(chapter_metadata([(t, len(a)) for t, a in chapters], title), encoding="utf-8")
         cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            ffmpeg(), "-hide_banner", "-loglevel", "error", "-y",
             "-i", str(wav), "-i", str(meta), "-map", "0:a", "-map_metadata", "1", "-map_chapters", "1",
             "-af", "loudnorm=I=-18:TP=-1.5:LRA=11",  # podcast/audiobook-style loudness
             "-ar", str(SAMPLE_RATE), *codec, str(out_path),

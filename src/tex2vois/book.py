@@ -23,7 +23,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from . import clean
-from .audio import _escape
+from .audio import _escape, ffmpeg
 from .script import Chapter, Para, Script
 
 WORDS_PER_MINUTE = 155  # measured with Kokoro at speed 1.0, including pauses
@@ -357,8 +357,6 @@ def assemble(folder: Path, out_path: Path, title: str) -> Path:
     done = finished(folder)
     if not done:
         raise ValueError("No finished chapters yet.")
-    if not shutil.which("ffmpeg"):
-        raise RuntimeError("ffmpeg not found. Install it with: brew install ffmpeg")
     order = sorted(done)
     with tempfile.TemporaryDirectory() as tmp:
         listing, meta = Path(tmp) / "list.txt", Path(tmp) / "meta.txt"
@@ -369,7 +367,7 @@ def assemble(folder: Path, out_path: Path, title: str) -> Path:
             lines += ["", "[CHAPTER]", "TIMEBASE=1/1000", f"START={start}", f"END={end}", f"title={_escape(done[i]['title'])}"]
             start = end
         meta.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(listing),
+        cmd = [ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(listing),
                "-i", str(meta), "-map", "0:a", "-map_metadata", "1", "-map_chapters", "1",
                "-c:a", "aac", "-b:a", "64k", "-f", "mp4", str(out_path)]
         proc = subprocess.run(cmd, capture_output=True, text=True)
