@@ -108,3 +108,30 @@ def test_llm_refuses_paid_models(monkeypatch):
     with pytest.raises(LLMError, match="paid"):
         LLM.from_env("openrouter", "openai/gpt-5")
     assert LLM.from_env("openrouter", "a:free,b:free").models == ["a:free", "b:free"]
+
+
+def test_summary_without_ai_or_abstract_uses_key_paragraphs():
+    s = paper()
+    s.chapters = [c for c in s.chapters if c.role != "abstract"]  # a paper with no recognisable abstract
+    out = modes.summary(s, llm=None)
+    texts = [p.text for p in out.chapters[0].paras]
+    assert texts and "We asked whether dsDNA protects dsRNA." in texts  # the question the intro ends on
+    assert all(p.source for p in out.chapters[0].paras)
+    assert "own key paragraphs" in out.notes[0] and "Claude or ChatGPT" in out.notes[0]
+    assert "LLM" not in out.notes[0] and "Ollama" not in out.notes[0]
+
+
+def test_summary_with_no_sections_starts_at_the_beginning():
+    s = Script("t", [Chapter("Part 1", [Para("c1p1", "Plain text with no headings at all.")], "body")], kind="paper")
+    assert modes.summary(s, None).chapters[0].paras[0].text.startswith("Plain text")
+
+
+def test_auto_provider_without_key_or_ollama(monkeypatch):
+    import tex2vois.llm as llm_mod
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("TEX2VOIS_LLM", raising=False)
+    monkeypatch.setattr(llm_mod, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr(llm_mod, "_ollama_running", lambda url: False)
+    with pytest.raises(LLMError, match="No AI available"):
+        LLM.from_env()

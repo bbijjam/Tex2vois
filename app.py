@@ -100,10 +100,7 @@ def _about(report: pipeline.Report) -> str:
     lines = [f"**{s.title}**", f"{_length(report.audio_seconds)} of listening, {s.words:,} words, {what}."]
     if report.llm_model:
         lines.append("Written with help from a free AI model; every number and name was checked against the original.")
-    for note in s.notes:
-        friendly = "The AI summary couldn't be checked, so you're hearing the paper's own abstract instead." \
-            if "abstract" in note else "Part of the AI help was skipped because it couldn't be checked against the paper."
-        lines.append(friendly)
+    lines += s.notes  # already written in plain language
     return "\n\n".join(lines)
 
 

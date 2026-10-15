@@ -256,7 +256,7 @@ def document_title(pdf_path: str) -> str:
     with pymupdf.open(pdf_path) as doc:
         meta = (doc.metadata or {}).get("title", "").strip()
         if meta and not meta.lower().startswith(("microsoft word", "untitled")):
-            return meta
+            return re.sub(r"[∗*†‡]+$", "", meta).strip()  # footnote marks after the title
         first = [l for l in _read_lines(doc, 1) if len(l.text) > 3]
     if not first:
         return ""

@@ -66,9 +66,9 @@ def skim(script: Script, llm: LLM | None = None) -> Script:
                     if not missing_facts(recap, text):  # nothing invented
                         keep = [Para(f"s-{ch.paras[0].id}", "In brief, the methods. " + recap, ch.paras[0].id)]
                     else:
-                        notes.append("methods recap rejected by the fact check; methods skipped")
+                        notes.append("The short recap of the methods was left out because it could not be checked against the paper.")
                 except LLMError as e:
-                    notes.append(f"methods recap unavailable ({e}); methods skipped")
+                    notes.append("The short recap of the methods was left out because the free AI model was busy or unavailable.")
         else:
             keep = []
         if keep:
@@ -78,8 +78,34 @@ def skim(script: Script, llm: LLM | None = None) -> Script:
     return Script(script.title, chapters, script.kind, "skim", notes)
 
 
-def summary(script: Script, llm: LLM | None = None) -> Script:
+SUMMARY_WORDS = 330  # about two minutes of listening
+AI_TIP = 'For an AI-written summary, use "Should I read this in depth?" below with Claude or ChatGPT.'
+
+
+def _own_words_summary(script: Script) -> tuple[list[Para], str]:
+    """A summary made only of the paper's own paragraphs: the abstract if there is one, otherwise
+    the opening, main results and conclusion (the highlights), trimmed to about two minutes."""
     abstract = next((c for c in script.chapters if c.role == "abstract"), None)
+    if abstract is not None:
+        return _sources(abstract, range(len(abstract.paras))), "the paper's own abstract"
+    try:
+        candidates = [p for c in skim(script, None).chapters for p in c.paras]
+    except ValueError:
+        candidates = []
+    if not candidates:  # no recognisable sections: just start at the beginning
+        candidates = [Para(f"s-{p.id}", p.text, p.id) for c in script.chapters for p in c.paras]
+    picked, words = [], 0
+    for para in candidates:
+        if picked and words + len(para.text.split()) > SUMMARY_WORDS * 1.3:
+            break
+        picked.append(para)
+        words += len(para.text.split())
+        if words >= SUMMARY_WORDS:
+            break
+    return picked, "the paper's own key paragraphs (its opening, main results and conclusion)"
+
+
+def summary(script: Script, llm: LLM | None = None) -> Script:
     if llm is not None:
         text = script.to_markdown()[:60000]
         try:
@@ -88,15 +114,16 @@ def summary(script: Script, llm: LLM | None = None) -> Script:
             if not invented:
                 paras = [p.strip() for p in answer.split("\n\n") if p.strip()]
                 return Script(script.title, [Chapter("Summary", [Para(f"sum{i}", t) for i, t in enumerate(paras, 1)], "summary")], script.kind, "summary")
-            note = f"LLM summary rejected: mentions {', '.join(sorted(invented)[:5])} which are not in the paper"
-        except LLMError as e:
-            note = f"LLM summary unavailable ({e})"
+            why = "The AI summary mentioned numbers or names that are not in the paper, so it was set aside. "
+        except LLMError:
+            why = "The free AI model was busy or unavailable. "
     else:
-        note = "no LLM configured"
-    if abstract is None:
-        raise ValueError(f"No summary possible: {note}, and no abstract found.")
-    return Script(script.title, [Chapter("Summary", _sources(abstract, range(len(abstract.paras))), "summary")],
-                  script.kind, "summary", [note + "; reading the abstract instead."])
+        why = ""
+    paras, source = _own_words_summary(script)
+    if not paras:
+        raise ValueError("This PDF has no readable text to summarise. If it is a scanned document, it can't be read yet.")
+    note = f"{why}This summary uses {source}. {AI_TIP}"
+    return Script(script.title, [Chapter("Summary", paras, "summary")], script.kind, "summary", [note])
 
 
 def apply(script: Script, mode: str, llm: LLM | None = None) -> Script:

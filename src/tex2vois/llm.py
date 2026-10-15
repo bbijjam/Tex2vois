@@ -57,6 +57,14 @@ def _ssl_context() -> ssl.SSLContext:
         return ssl.create_default_context()
 
 
+def _ollama_running(base_url: str) -> bool:
+    try:
+        urllib.request.urlopen(base_url.rsplit("/v1", 1)[0] + "/api/tags", timeout=0.6)
+        return True
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
 @dataclass
 class LLM:
     provider: str
@@ -74,7 +82,12 @@ class LLM:
         if provider in ("off", "none"):
             raise LLMError("AI features are switched off (TEX2VOIS_LLM=off).")
         if provider == "auto":
-            provider = "openrouter" if key else "ollama"
+            if key:
+                provider = "openrouter"
+            elif _ollama_running(os.environ.get("OLLAMA_URL", OLLAMA_URL)):
+                provider = "ollama"
+            else:
+                raise LLMError("No AI available: no OpenRouter key in .env, and Ollama isn't running.")
         override = model or os.environ.get("TEX2VOIS_MODELS")
         if provider == "openrouter":
             if not key:
