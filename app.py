@@ -15,7 +15,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from tex2vois import assistant, book, pipeline, player, triage
+from tex2vois import assistant, book, pipeline, player, themes, triage
 from tex2vois.llm import LLM, LLMError
 from tex2vois.tts import DEFAULT_VOICE, Synthesizer
 
@@ -46,7 +46,9 @@ MODE_CHOICES = [
     ("Highlights (the most important parts)", "skim"),
     ("The whole paper", "full"),
 ]
-EMPTY = """<div class="t2v-empty"><strong>{title}</strong><span>{hint}</span></div>"""
+EMPTY = """<div class="t2v-player t2v-empty-player"><div class="t2v-stage">
+<div class="t2v-np-label">Now playing</div><div class="t2v-np-title">{title}</div>
+<div class="t2v-np-chapter">{hint}</div></div></div>"""
 
 
 class Stopped(Exception):
@@ -273,9 +275,8 @@ def run_deep(script_text, pdf, voice, speed, fmt, request: gr.Request, progress=
 
 DEEP_INTRO = """
 <div class="t2v-triage-head">
-  <h3>Have Claude or ChatGPT write a listening script, then listen here</h3>
-  <p>Your own assistant explains the paper in a script of the length you choose, and Tex2vois reads it aloud with live captions.
-  This is separate from the quick summary and highlights on the Research paper tab.</p>
+  <h3>How it works</h3>
+  <p>This is separate from the quick summary and highlights on the Research paper tab.</p>
   <ol>
     <li>Add the paper. This is optional, but it lets Tex2vois include the paper's text and check the script afterwards.</li>
     <li>Choose how long you would like to listen.</li>
@@ -432,68 +433,158 @@ THEME = gr.themes.Base(
 
 CSS = player.CSS + """
 @import url('https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,400;7..72,600&display=swap');
-.gradio-container { max-width: 1180px !important; width: 100% !important; margin: 0 auto !important; padding-top: 8px !important; }
+body, .gradio-container { background: var(--t2v-page) !important; }
+.gradio-container { max-width: 1200px !important; width: 100% !important; margin: 0 auto !important; padding-top: 14px !important; }
 footer { opacity: .5; }
 
-/* header: a plain wordmark, no logo tile */
-.t2v-header { padding: 22px 2px 10px; border-bottom: 1px solid var(--t2v-border); margin-bottom: 6px; }
-.t2v-header h1 { margin: 0; font-family: 'Literata', Georgia, serif; font-size: 1.9rem; font-weight: 600;
-  letter-spacing: -.01em; color: var(--t2v-text); }
-.t2v-header p { margin: 4px 0 0; color: var(--t2v-muted); font-size: 1rem; }
+/* ---------- header band ---------- */
+:root { --t2v-pattern: radial-gradient(circle, #ffffff16 1px, transparent 1.6px) 0 0 / 18px 18px;
+        --t2v-pattern-soft: radial-gradient(circle, #ffffff0c 1px, transparent 1.6px) 0 0 / 18px 18px; }
+.t2v-header { position: relative; overflow: hidden; isolation: isolate;
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+  padding: 28px 30px 26px; border-radius: 16px; background: var(--t2v-brand); color: var(--t2v-brand-text);
+  box-shadow: 0 14px 34px rgba(18, 64, 63, .22); }
+.t2v-header::before { content: ""; position: absolute; inset: -40px; z-index: -1; background: var(--t2v-pattern);
+  animation: t2v-drift 60s linear infinite; pointer-events: none; }
+@keyframes t2v-drift { from { transform: translate(0, 0); } to { transform: translate(40px, 24px); } }
+.t2v-header h1 { margin: 0; font-family: 'Literata', Georgia, serif; font-size: 2.2rem; font-weight: 600; letter-spacing: -.01em;
+  color: var(--t2v-brand-text); }
+.t2v-header p { margin: 6px 0 0; max-width: 560px; font-size: 1.04rem; line-height: 1.5; color: var(--t2v-brand-muted); }
+.t2v-header-side { display: flex; flex-direction: column; align-items: flex-end; gap: 12px; }
+.t2v-header-points { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.t2v-theme-pick { display: inline-flex; align-items: center; gap: 8px; font-size: .85rem; font-weight: 500; color: var(--t2v-brand-muted) !important; }
+.t2v-theme-pick select { height: 36px; padding: 0 10px; border-radius: 8px; font: inherit; font-size: .9rem; cursor: pointer;
+  background: #ffffff14; color: var(--t2v-brand-text); border: 1px solid #ffffff38; }
+.t2v-theme-pick select:focus-visible { outline: 2px solid var(--t2v-brand-text); outline-offset: 2px; }
+.t2v-theme-pick select option { color: #1d1c1a; background: #ffffff; }
+.t2v-header-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.t2v-bg-pick, .t2v-bg-clear { display: inline-flex; align-items: center; height: 36px; padding: 0 12px; border-radius: 8px;
+  cursor: pointer; font: inherit; font-size: .85rem; font-weight: 500; background: #ffffff14; color: var(--t2v-brand-text) !important;
+  border: 1px solid #ffffff38; }
+.t2v-bg-pick:hover, .t2v-bg-clear:hover { background: #ffffff24; }
+.t2v-bg-pick:focus-within, .t2v-bg-clear:focus-visible { outline: 2px solid var(--t2v-brand-text); outline-offset: 2px; }
+.t2v-bg-status { font-size: .8rem; color: var(--t2v-brand-muted) !important; }
 
-/* tabs: simple underlined text tabs */
-.t2v-tabs > .tab-wrapper { margin: 6px 0 14px; }
-.t2v-tabs > .tab-wrapper .tab-container { gap: 4px; }
-.t2v-tabs > .tab-wrapper button[role="tab"] {
-  font-size: 1rem !important; font-weight: 500 !important; color: var(--t2v-muted) !important;
-  padding: 10px 14px !important; background: transparent !important; border: none !important;
+/* the reader's own background picture, behind a veil so text stays readable */
+:root { --t2v-bg-veil: rgba(243, 241, 236, .80); }
+body.dark { --t2v-bg-veil: rgba(10, 10, 12, .74); }
+html.t2v-has-bg body { background: linear-gradient(var(--t2v-bg-veil), var(--t2v-bg-veil)), var(--t2v-bg-image) center / cover fixed no-repeat !important; }
+/* text that normally sits on the page gets its own backing when a picture is behind it */
+html.t2v-has-bg .t2v-tabs > .tab-wrapper { background: var(--t2v-surface); border: 1px solid var(--t2v-border); border-radius: 12px; padding: 4px; }
+html.t2v-has-bg .t2v-help, html.t2v-has-bg .t2v-about, html.t2v-has-bg .t2v-status {
+  background: var(--t2v-surface); border: 1px solid var(--t2v-border); border-radius: 10px; padding: 8px 12px !important; }
+html.t2v-has-bg gradio-app, html.t2v-has-bg .gradio-container, html.t2v-has-bg .main,
+html.t2v-has-bg .wrap, html.t2v-has-bg .contain { background: transparent !important; }
+
+/* ---------- gentle motion ---------- */
+@keyframes t2v-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes t2v-pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--t2v-mode-on-stage) 55%, transparent); }
+                       50% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--t2v-mode-on-stage) 0%, transparent); } }
+.t2v-header, .t2v-intro, .t2v-player, .t2v-notes, .t2v-triage { animation: t2v-rise .45s ease-out both; }
+.t2v-intro { animation-delay: .05s; } .t2v-player { animation-delay: .1s; } .t2v-notes { animation-delay: .15s; }
+.t2v-player.t2v-playing .t2v-ctl.t2v-play { animation: t2v-pulse 2.2s ease-in-out infinite; }
+.t2v-ctl, .t2v-rate, .t2v-link-btn, .t2v-icon-btn, .t2v-bg-pick, .t2v-bg-clear, button.primary, button.secondary {
+  transition: transform .15s ease, background .15s ease, border-color .15s ease, filter .15s ease; }
+.t2v-ctl:hover, .t2v-link-btn:hover, .t2v-icon-btn:hover, button.primary:hover { transform: translateY(-1px); }
+.t2v-ctl:active, button.primary:active { transform: translateY(0) scale(.97); }
+.t2v-fill { transition: width .25s linear; }
+.t2v-captions .t2v-s { transition: background .3s ease, box-shadow .3s ease, color .3s ease; }
+.tabitem { animation: t2v-rise .3s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .t2v-header::before, .t2v-header, .t2v-intro, .t2v-player, .t2v-notes, .t2v-triage, .tabitem,
+  .t2v-player.t2v-playing .t2v-ctl.t2v-play { animation: none !important; }
+  .t2v-ctl, .t2v-rate, .t2v-fill, .t2v-captions .t2v-s, .t2v-captions p, button { transition: none !important; }
 }
-.t2v-tabs > .tab-wrapper button[role="tab"]:hover { color: var(--t2v-text) !important; }
-.t2v-tabs > .tab-wrapper button[role="tab"].selected { color: var(--t2v-text) !important; font-weight: 600 !important; }
-.t2v-tabs > .tab-wrapper button[role="tab"].selected::after { background: var(--t2v-accent) !important; height: 2px !important; }
+@media (max-width: 760px) { .t2v-header-side { align-items: flex-start; } .t2v-header-points { justify-content: flex-start; } }
+.t2v-header-points span { padding: 7px 12px; border-radius: 999px; font-size: .85rem; font-weight: 500;
+  background: #ffffff14; border: 1px solid #ffffff26; color: var(--t2v-brand-text); }
 
-/* settings bar: one quiet panel */
-.t2v-settings { background: var(--t2v-surface); border: 1px solid var(--t2v-border); border-radius: 8px;
-  padding: 14px 16px !important; gap: 18px !important; align-items: center !important; margin-top: 10px; }
+/* ---------- settings bar ---------- */
+.t2v-settings { background: var(--t2v-surface); border: 1px solid var(--t2v-border); border-radius: 14px;
+  padding: 14px 18px !important; gap: 18px !important; align-items: center !important; margin-top: 14px; }
 .t2v-settings > *:not(button) { border: none !important; box-shadow: none !important; background: transparent !important; }
 .t2v-settings input[type=number], .t2v-settings button[aria-label*='eset'], .t2v-settings .reset-button { display: none !important; }
 .t2v-settings button { min-height: 42px; }
 
-.t2v-card-title { font-size: 1.05rem; font-weight: 600; margin: 2px 2px 10px; color: var(--t2v-text); }
-.t2v-help { color: var(--t2v-muted); font-size: .9rem; line-height: 1.5; margin: 8px 2px 0; }
-.t2v-empty { display: flex; flex-direction: column; gap: 4px; padding: 26px 22px; border-radius: 8px;
-  border: 1px dashed var(--t2v-border); background: var(--t2v-surface-2); color: var(--t2v-muted); }
-.t2v-empty strong { color: var(--t2v-text); font-weight: 600; }
-.t2v-buttons button { min-height: 46px; font-size: 1rem !important; font-weight: 600 !important; }
-.t2v-about { font-size: .95rem; }
+/* ---------- tabs ---------- */
+.t2v-tabs > .tab-wrapper { margin: 16px 0 16px; }
+.t2v-tabs > .tab-wrapper .tab-container { gap: 6px; }
+.t2v-tabs > .tab-wrapper button[role="tab"] {
+  font-size: 1rem !important; font-weight: 500 !important; color: var(--t2v-muted) !important;
+  padding: 10px 16px !important; background: transparent !important; border: none !important; border-radius: 10px !important;
+}
+.t2v-tabs > .tab-wrapper button[role="tab"]:hover { color: var(--t2v-text) !important; background: var(--t2v-surface) !important; }
+.t2v-tabs > .tab-wrapper button[role="tab"].selected { color: var(--t2v-text) !important; font-weight: 600 !important;
+  background: var(--t2v-surface) !important; box-shadow: inset 0 0 0 1px var(--t2v-border); }
+.t2v-tabs > .tab-wrapper button[role="tab"].selected::after { display: none !important; }
 
-/* "should I read this in depth?" panel */
+/* ---------- per-mode accents ---------- */
+[class*="t2v-mode-"] { --t2v-on-mode: #ffffff; }
+.dark [class*="t2v-mode-"] { --t2v-on-mode: #101413; }
+[class*="t2v-mode-"] button.primary { background: var(--t2v-mode) !important; border-color: var(--t2v-mode) !important;
+  color: var(--t2v-on-mode) !important; }
+[class*="t2v-mode-"] button.primary:hover { filter: brightness(1.08); }
+[class*="t2v-mode-"] input[type=radio]:checked, [class*="t2v-mode-"] input[type=checkbox]:checked {
+  background-color: var(--t2v-mode) !important; border-color: var(--t2v-mode) !important; }
+[class*="t2v-mode-"] label.selected { background: var(--t2v-mode-soft) !important; color: var(--t2v-text) !important;
+  box-shadow: inset 0 0 0 1px var(--t2v-mode); }
+
+.t2v-intro { padding: 18px 20px; border-radius: 14px; background: var(--t2v-mode-soft); border: 1px solid var(--t2v-border);
+  border-left: 5px solid var(--t2v-mode); margin-bottom: 4px; }
+.t2v-intro-kicker { font-size: .74rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--t2v-mode); }
+.t2v-intro h2 { margin: 4px 0 4px; font-family: 'Literata', Georgia, serif; font-size: 1.35rem; font-weight: 600; color: var(--t2v-text); }
+.t2v-intro p { margin: 0; color: var(--t2v-muted); line-height: 1.5; }
+
+/* ---------- panels and text ---------- */
+.t2v-help { color: var(--t2v-muted); font-size: .9rem; line-height: 1.5; margin: 8px 2px 0; }
+.t2v-buttons button { min-height: 50px; font-size: 1.02rem !important; font-weight: 600 !important; border-radius: 10px !important; }
+.t2v-about { font-size: .95rem; padding: 2px 4px; }
+.t2v-empty-player .t2v-stage { padding-bottom: 22px; }
+.t2v-empty-player .t2v-np-chapter { color: var(--t2v-stage-muted); max-width: 520px; line-height: 1.5; }
+.t2v-wave { height: 46px; margin-top: 16px; border-radius: 8px; opacity: .55;
+  background:
+    repeating-linear-gradient(90deg, var(--t2v-mode-on-stage) 0 3px, transparent 3px 9px) center / 100% 30% no-repeat,
+    repeating-linear-gradient(90deg, var(--t2v-mode-on-stage) 0 3px, transparent 3px 9px) 4px center / 100% 70% no-repeat,
+    repeating-linear-gradient(90deg, var(--t2v-mode-on-stage) 0 3px, transparent 3px 9px) 2px center / 100% 50% no-repeat; }
+
+/* instruction panels with numbered steps */
+.t2v-triage { margin-top: 18px; padding: 20px 22px !important; background: var(--t2v-surface);
+  border: 1px solid var(--t2v-border); border-radius: 14px; }
 .t2v-deep { margin: 0 0 12px !important; }
-.t2v-triage { margin-top: 18px; padding: 18px 20px !important; background: var(--t2v-surface);
-  border: 1px solid var(--t2v-border); border-radius: 8px; }
-.t2v-triage-head h3 { margin: 0 0 4px; font-size: 1.15rem; font-weight: 600; color: var(--t2v-text); }
-.t2v-triage-head p { margin: 0 0 8px; color: var(--t2v-muted); }
-.t2v-triage-head ol { margin: 0 0 6px 1.2em; padding: 0; color: var(--t2v-text); line-height: 1.6; }
+.t2v-triage-head h3 { margin: 0 0 4px; font-family: 'Literata', Georgia, serif; font-size: 1.25rem; font-weight: 600; color: var(--t2v-text); }
+.t2v-triage-head p { margin: 0 0 12px; color: var(--t2v-muted); line-height: 1.5; }
+.t2v-triage-head ol { list-style: none; counter-reset: step; margin: 0 0 6px; padding: 0; }
+.t2v-triage-head li { counter-increment: step; position: relative; padding: 2px 0 10px 40px; line-height: 1.5; color: var(--t2v-text); }
+.t2v-triage-head li::before { content: counter(step); position: absolute; left: 0; top: 0; width: 26px; height: 26px; border-radius: 999px;
+  display: grid; place-items: center; font-size: .82rem; font-weight: 700; background: var(--t2v-mode-soft); color: var(--t2v-mode);
+  box-shadow: inset 0 0 0 1px var(--t2v-mode); }
 .t2v-triage-actions { align-items: center !important; gap: 10px !important; }
-.t2v-triage-actions button { min-height: 44px; }
+.t2v-triage-actions button { min-height: 44px; border-radius: 10px !important; }
 .t2v-links { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .t2v-links span { color: var(--t2v-muted); margin-right: 4px; }
-.t2v-link-btn { display: inline-flex; align-items: center; height: 44px; padding: 0 16px; border-radius: 6px;
-  border: 1px solid var(--t2v-border); background: var(--t2v-surface); color: var(--t2v-accent) !important;
+.t2v-link-btn { display: inline-flex; align-items: center; height: 44px; padding: 0 18px; border-radius: 10px;
+  border: 1px solid var(--t2v-border); background: var(--t2v-surface); color: var(--t2v-mode) !important;
   font-weight: 600; text-decoration: none !important; white-space: nowrap; }
-.t2v-link-btn:hover { border-color: var(--t2v-accent); }
-.t2v-link-btn:focus-visible { outline: 2px solid var(--t2v-accent); outline-offset: 2px; }
+.t2v-link-btn:hover { border-color: var(--t2v-mode); background: var(--t2v-mode-soft); }
+.t2v-link-btn:focus-visible { outline: 2px solid var(--t2v-mode); outline-offset: 2px; }
 
 @media (max-width: 760px) {
-  .t2v-header h1 { font-size: 1.5rem; }
+  .t2v-header { padding: 22px 20px; } .t2v-header h1 { font-size: 1.7rem; }
   .t2v-tabs > .tab-wrapper button[role="tab"] { padding: 8px 10px !important; font-size: .95rem !important; }
+  .t2v-controls { gap: 8px; } .t2v-ctl { width: 36px; height: 36px; } .t2v-ctl.t2v-play { width: 48px; height: 48px; }
 }
 """
 
-HEADER = """
+HEADER = f"""
 <div class="t2v-header">
-  <h1>Tex2vois</h1>
-  <p>Turn articles, research papers and books into audio, and follow the words as they are read.</p>
+  <div>
+    <h1>Tex2vois</h1>
+    <p>Turn articles, research papers and books into natural-sounding audio, and follow every word as it is read.</p>
+  </div>
+  <div class="t2v-header-side">
+    {themes.picker()}
+    <div class="t2v-header-points"><span>Natural voices</span><span>Live captions</span><span>Notes as you listen</span></div>
+  </div>
 </div>
 """
 
@@ -506,8 +597,11 @@ def help_text(text: str):
     gr.HTML(f'<p class="t2v-help">{text}</p>')
 
 
+def mode_intro(kicker: str, title: str, text: str):
+    gr.HTML(f'<div class="t2v-intro"><div class="t2v-intro-kicker">{kicker}</div><h2>{title}</h2><p>{text}</p></div>', padding=False)
+
+
 def listen_panel(hint: str):
-    card_title("Listen")
     listen = gr.HTML(empty(hint=hint), padding=False)
     about = gr.Markdown(elem_classes="t2v-about")
     download = gr.File(label="Save the audio", height=64, visible=False)
@@ -530,9 +624,10 @@ with gr.Blocks(title="Tex2vois") as demo:
     preview_btn.click(preview, [voice, speed], preview_audio)
 
     with gr.Tabs(elem_classes="t2v-tabs"):
-        with gr.Tab("Article"):
+        with gr.Tab("Article", elem_classes="t2v-mode-article"):
             with gr.Row(equal_height=False):
                 with gr.Column(scale=5):
+                    mode_intro("Article", "Read anything aloud", "Paste an article, an email or your own notes and listen while the words light up.")
                     with gr.Group():
                         text = gr.Textbox(label="Paste your text", lines=15, max_lines=30,
                                           placeholder="Paste a blog post, a news story, an email or notes…")
@@ -546,9 +641,10 @@ with gr.Blocks(title="Tex2vois") as demo:
             a_job = a_go.click(run_article, [text, voice, speed, a_rewrite, fmt], list(a_out))
             a_stop.click(stop, None, None, cancels=[a_job])
 
-        with gr.Tab("Research paper"):
+        with gr.Tab("Research paper", elem_classes="t2v-mode-paper"):
             with gr.Row(equal_height=False):
                 with gr.Column(scale=5):
+                    mode_intro("Research paper", "Hear a paper your way", "A two-minute summary, the highlights, or the whole paper, read clearly.")
                     pdf = gr.File(label="Add a paper (PDF)", file_types=[".pdf"], type="filepath", height=190)
                     mode = gr.Radio(MODE_CHOICES, value="summary", label="What would you like to hear?")
                     p_rewrite = gr.Checkbox(label="Read equations and symbols in plain words (uses AI, slower)")
@@ -584,9 +680,10 @@ with gr.Blocks(title="Tex2vois") as demo:
             copy_plain.click(None, [t_prompt], copy_status, js=COPY_PLAIN_JS)
             copy_full.click(None, [t_prompt, t_text], copy_status, js=COPY_FULL_JS)
 
-        with gr.Tab("Assistant script"):
+        with gr.Tab("Assistant script", elem_classes="t2v-mode-assistant"):
             with gr.Row(equal_height=False):
                 with gr.Column(scale=5):
+                    mode_intro("Assistant script", "Your assistant explains, Tex2vois reads", "Have Claude or ChatGPT write a script of the length you choose, then listen to it here.")
                     with gr.Column(elem_classes="t2v-triage t2v-deep"):
                         gr.HTML(DEEP_INTRO, padding=False)
                         d_pdf = gr.File(label="The paper (PDF, optional)", file_types=[".pdf"], type="filepath", height=150)
@@ -618,9 +715,10 @@ with gr.Blocks(title="Tex2vois") as demo:
             d_job = d_go.click(run_deep, [script_in, d_pdf, voice, speed, fmt], list(d_out))
             d_stop.click(stop, None, None, cancels=[d_job])
 
-        with gr.Tab("Book"):
+        with gr.Tab("Book", elem_classes="t2v-mode-book"):
             with gr.Row(equal_height=False):
                 with gr.Column(scale=5):
+                    mode_intro("Book", "Turn a book into an audiobook", "Prepared chapter by chapter, so you can start listening while the rest are on the way.")
                     book_file = gr.File(label="Add a book (EPUB, text file or PDF)", file_types=[".epub", ".txt", ".pdf"],
                                         type="filepath", height=190)
                     book_info = gr.Markdown()
@@ -632,7 +730,6 @@ with gr.Blocks(title="Tex2vois") as demo:
                     help_text("Books are prepared one chapter at a time, so you can start listening while the rest are on the way. "
                               "Pause whenever you like; pressing Start again carries on where it stopped.")
                 with gr.Column(scale=7):
-                    card_title("Listen")
                     listen_to = gr.Dropdown(label="Chapter", choices=[], value=None)
                     b_player = gr.HTML(empty("No book yet", "Add an EPUB, a plain-text book or a PDF on the left."), padding=False)
                     with gr.Row():
@@ -659,4 +756,5 @@ with gr.Blocks(title="Tex2vois") as demo:
 
 
 if __name__ == "__main__":
-    demo.queue(default_concurrency_limit=2).launch(theme=THEME, js=player.JS, css=CSS, allowed_paths=[str(OUT_DIR)])
+    page_js = player.JS.replace("() => {", "() => {" + themes.JS, 1)
+    demo.queue(default_concurrency_limit=2).launch(theme=THEME, js=page_js, css=CSS + themes.css(), allowed_paths=[str(OUT_DIR)])

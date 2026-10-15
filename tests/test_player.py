@@ -34,4 +34,6 @@ def test_render_escapes_and_marks_sentences(tmp_path):
     page = player.render("/gradio_api/file=/tmp/x.wav", caps, "T")
     assert "<script>" not in page and "&lt;script&gt;" in page
     assert page.count('class="t2v-s"') == 2 and page.count("<h4") == 1
-    assert 'class="t2v-captions"' in page and "<audio controls" in page
+    assert 'class="t2v-captions"' in page and "<audio " in page
+    for control in ('data-t2v-ctl="play"', 'data-t2v-ctl="back"', 'data-t2v-ctl="fwd"', 'data-t2v-ctl="rate"', 'class="t2v-track"'):
+        assert control in page

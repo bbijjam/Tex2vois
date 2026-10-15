@@ -89,7 +89,8 @@ chapter at a time, with a manifest on disk so generation can pause and resume.
 | `tts.py` | Kokoro-82M voices, sentence splitting |
 | `pipeline.py` | Load → mode → rewrite → speech; timings, captions and cues |
 | `audio.py` | ffmpeg export: loudness normalisation, chapter markers, m4b / mp3 / wav |
-| `player.py` | Caption player and notes pad (HTML + one page script) |
+| `player.py` | Now-playing card with custom controls, synced captions and the notes pad |
+| `themes.py` | Colour themes, background patterns and the background-picture option |
 | `triage.py` | Instructions for Claude / ChatGPT: the read-in-depth verdict and listening scripts of a chosen length |
 | `assistant.py` | Reads a script written by Claude / ChatGPT and checks it against the paper |
 | `app.py` | The web app (Gradio): Article, Paper and Book tabs |
@@ -117,6 +118,13 @@ numbers and names made it into the script and lists any that aren't in the paper
 **About your work** is an optional note (for example "I study RNAi-based pest control in soybean") that is added to
 the instructions so the assistant can judge relevance. It is remembered in your browser only, and a "Use it this time"
 switch leaves it out for a single paper.
+
+**Look and feel.** A now-playing card with play, back and forward 15 seconds, a seekable progress bar and
+playback speed; captions dim everything except the paragraph being read. Pick a colour theme in the header
+(Classic, or palettes inspired by Naruto, Demon Slayer, One Piece, Solo Leveling and Hunter x Hunter; colours and
+original CSS patterns only, no artwork), each with light and dark versions checked for contrast. You can also set
+your own background picture: it is resized and kept in your browser only, never uploaded. Animations are gentle and
+switch off when your device asks for reduced motion.
 
 While listening, the words light up as they are read and the caption box scrolls with the audio (click a
 sentence to jump there). A notes pad sits next to the player: **Mark this moment** adds the time and the
