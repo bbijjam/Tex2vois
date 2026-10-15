@@ -5,6 +5,7 @@ Run:  python app.py   (then open http://127.0.0.1:7860)
 
 from __future__ import annotations
 
+import functools
 import json
 import mimetypes
 import re
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from tex2vois import book, pipeline, player, triage
+from tex2vois import assistant, book, pipeline, player, triage
 from tex2vois.llm import LLM, LLMError
 from tex2vois.tts import DEFAULT_VOICE, Synthesizer
 
@@ -92,7 +93,8 @@ def _stopper(progress, session):
 def _about(report: pipeline.Report) -> str:
     """A plain-language note about the audio that was just made."""
     s = report.script
-    what = {"summary": "a quick summary", "skim": "the highlights", "full": "the whole text"}[s.mode]
+    what = {"summary": "a quick summary", "skim": "the highlights", "full": "the whole text",
+            "assistant": "the script from your assistant"}[s.mode]
     lines = [f"**{s.title}**", f"{_length(report.audio_seconds)} of listening, {s.words:,} words, {what}."]
     if report.llm_model:
         lines.append("Written with help from a free AI model; every number and name was checked against the original.")
@@ -142,16 +144,15 @@ def run_paper(pdf, mode, voice, speed, rewrite, fmt, request: gr.Request, progre
     return _run(Path(pdf), "paper", mode, voice, speed, rewrite, fmt, progress, request.session_hash)
 
 
-def triage_prompt(pdf, focus):
+def triage_prompt(pdf, focus, context, use_context):
     """Instructions for Claude / ChatGPT, plus the paper's cleaned text for the 'with text' copy button."""
     if pdf is None:
         return "", ""
     try:
-        script = pipeline.load(Path(pdf), "paper")
+        title, body = _paper_text(pdf)
     except (ValueError, RuntimeError) as e:
         raise gr.Error(f"Sorry, this paper couldn't be read. {e}")
-    body = "\n\n".join(f"{c.title}\n\n" + "\n\n".join(p.text for p in c.paras) for c in script.chapters)
-    return triage.build(script.title, focus), body
+    return triage.build(title, focus, context=context if use_context else ""), body
 
 
 COPY_PLAIN_JS = r'''(prompt) => {
@@ -162,7 +163,7 @@ COPY_PLAIN_JS = r'''(prompt) => {
 COPY_FULL_JS = r'''(prompt, text) => {
   if (!prompt) return 'Add a paper first.';
   const fence = '"' + '"' + '"';
-  const full = prompt.replace('the attached paper', 'the paper text included below')
+  const full = prompt.replace(/the attached (research )?paper/, (m, r) => 'the ' + (r || '') + 'paper text included below')
     + '\n\nPaper text:\n' + fence + '\n' + text + '\n' + fence;
   navigator.clipboard.writeText(full);
   return 'Copied, including the paper. Open Claude or ChatGPT and paste. No need to attach anything.';
@@ -183,6 +184,106 @@ ASSISTANT_LINKS = "".join(
     f'<a class="t2v-link-btn" href="{url}" target="_blank" rel="noopener noreferrer">Open {name}</a>'
     for name, url in triage.ASSISTANTS.items()
 )
+
+
+def _paper_text(pdf) -> tuple[str, str]:
+    """(title, cleaned body) of an uploaded paper; cached so editing other fields doesn't re-read the PDF."""
+    path = Path(pdf)
+    return _read_paper(str(path), path.stat().st_mtime)
+
+
+@functools.lru_cache(maxsize=8)
+def _read_paper(path: str, mtime: float) -> tuple[str, str]:
+    script = pipeline.load(Path(path), "paper")
+    body = "\n\n".join(f"{c.title}\n\n" + "\n\n".join(p.text for p in c.paras) for c in script.chapters)
+    return script.title, body
+
+
+def deep_prepare(pdf, length, context, use_context):
+    context = context if use_context else ""
+    minutes = triage.LENGTHS.get(length, 10)
+    if pdf is None:
+        return triage.build_script_prompt("", context=context, minutes=minutes), ""
+    try:
+        title, body = _paper_text(pdf)
+    except (ValueError, RuntimeError) as e:
+        raise gr.Error(f"Sorry, this paper couldn't be read. {e}")
+    return triage.build_script_prompt(title, context=context, minutes=minutes), body
+
+
+CONTEXT_LABEL = "About your work (optional, remembered in this browser)"
+CONTEXT_HINT = ("For example: I study RNAi-based pest control in soybean and need delivery methods that work in the field. "
+                "Saved only in this browser, so you don't have to type it again. Clear it to forget it.")
+
+
+def context_field():
+    with gr.Group():
+        box = gr.Textbox(label=CONTEXT_LABEL, lines=2, max_lines=6, placeholder=CONTEXT_HINT)
+        use = gr.Checkbox(label="Use it this time", value=True)
+    return box, use
+
+
+def deep_load_file(file):
+    if file is None:
+        return gr.skip()
+    return Path(file).read_text(encoding="utf-8", errors="replace")
+
+
+def _check_note(script_text: str, paper_body: str) -> str:
+    r = assistant.compare(script_text, paper_body)
+    lines = [f"Checked against the paper: the script includes **{r['covered']} of the {r['paper_facts']}** numbers and names "
+             f"in the paper ({r['coverage']:.0%})."]
+    if len(script_text.split()) < 0.5 * len(paper_body.split()):
+        lines[0] += " A shorter script leaves some details out by design."
+    if r["not_in_paper"]:
+        lines.append("In the script but not found in the paper, worth checking: " + ", ".join(r["not_in_paper"][:10]) + ".")
+    if r["missing"]:
+        more = f" and {len(r['missing']) - 12} more" if len(r["missing"]) > 12 else ""
+        lines.append("In the paper but not in the script: " + ", ".join(r["missing"][:12]) + more + ".")
+    return "\n\n".join(lines)
+
+
+def run_deep(script_text, pdf, voice, speed, fmt, request: gr.Request, progress=gr.Progress()):
+    if not script_text or not script_text.strip():
+        raise gr.Error("Paste the script from your assistant first.")
+    try:
+        parsed = assistant.parse(script_text)
+    except ValueError as e:
+        raise gr.Error(str(e))
+    session = request.session_hash
+    out = OUT_DIR / f"{_slug(parsed.script.title)}-script-{int(time.time())}.{fmt}"
+    try:
+        report = pipeline.convert(parsed.script, out, kind="paper", voice=voice, speed=speed,
+                                  synthesizer=synth, progress=_stopper(progress, session))
+    except Stopped:
+        raise gr.Error("Stopped. Nothing was saved.", title="Stopped")
+    except (ValueError, RuntimeError) as e:
+        raise gr.Error(str(e))
+    finally:
+        STOP_REQUESTED.discard(session)
+    about = [_about(report)] + parsed.notes
+    if pdf is not None:
+        try:
+            about.append(_check_note(parsed.script.to_markdown(), _paper_text(pdf)[1]))
+        except (ValueError, RuntimeError):
+            pass
+    return (player.render(_url(report.output), report.captions, report.script.title),
+            gr.update(value=str(report.output), visible=True), "\n\n".join(about))
+
+
+DEEP_INTRO = """
+<div class="t2v-triage-head">
+  <h3>Have Claude or ChatGPT write a listening script, then listen here</h3>
+  <p>Your own assistant explains the paper in a script of the length you choose, and Tex2vois reads it aloud with live captions.
+  This is separate from the quick summary and highlights on the Research paper tab.</p>
+  <ol>
+    <li>Add the paper. This is optional, but it lets Tex2vois include the paper's text and check the script afterwards.</li>
+    <li>Choose how long you would like to listen.</li>
+    <li>Copy the instructions, open Claude or ChatGPT, paste them, attach the PDF (not needed if you copied the version with the paper's text), and send.</li>
+    <li>The assistant writes the script. If it ends with "CONTINUING IN THE NEXT MESSAGE", reply "continue" until the last line says "END OF SCRIPT".</li>
+    <li>Copy the assistant's whole answer with its copy button, paste it in the box below, and press Read it to me.</li>
+  </ol>
+</div>"""
 
 
 def stop(request: gr.Request):
@@ -367,6 +468,7 @@ footer { opacity: .5; }
 .t2v-about { font-size: .95rem; }
 
 /* "should I read this in depth?" panel */
+.t2v-deep { margin: 0 0 12px !important; }
 .t2v-triage { margin-top: 18px; padding: 18px 20px !important; background: var(--t2v-surface);
   border: 1px solid var(--t2v-border); border-radius: 8px; }
 .t2v-triage-head h3 { margin: 0 0 4px; font-size: 1.15rem; font-weight: 600; color: var(--t2v-text); }
@@ -415,6 +517,9 @@ def listen_panel(hint: str):
 
 with gr.Blocks(title="Tex2vois") as demo:
     gr.HTML(HEADER)
+    # A fixed secret so the saved value can still be read after the app restarts (it only obscures the
+    # person's own note in their own browser; nothing is stored on the server).
+    saved_context = gr.BrowserState("", storage_key="tex2vois-about-my-work", secret="tex2vois-about-my-work-v1")
 
     with gr.Row(equal_height=True, elem_classes="t2v-settings"):
         voice = gr.Dropdown(VOICE_CHOICES, value=DEFAULT_VOICE, label="Voice", scale=3)
@@ -460,8 +565,9 @@ with gr.Blocks(title="Tex2vois") as demo:
 
             with gr.Column(elem_classes="t2v-triage"):
                 gr.HTML(TRIAGE_INTRO, padding=False)
-                focus = gr.Textbox(label="What are you looking for? (optional)",
+                focus = gr.Textbox(label="What are you looking for in this paper? (optional)",
                                    placeholder="For example: drought tolerance in rice, or better ways to deliver RNAi to insects")
+                t_ctx, t_use = context_field()
                 t_prompt = gr.Textbox(label="Instructions for the assistant (you can edit them)", lines=12, max_lines=24,
                                       placeholder="Add a paper above and the instructions will appear here.")
                 t_text = gr.Textbox(visible=False)
@@ -470,11 +576,47 @@ with gr.Blocks(title="Tex2vois") as demo:
                     copy_full = gr.Button("Copy instructions with the paper's text")
                 copy_status = gr.Markdown()
                 gr.HTML(f'<div class="t2v-links"><span>Then open:</span>{ASSISTANT_LINKS}</div>', padding=False)
-            pdf.change(triage_prompt, [pdf, focus], [t_prompt, t_text])
-            focus.submit(triage_prompt, [pdf, focus], [t_prompt, t_text])
-            focus.blur(triage_prompt, [pdf, focus], [t_prompt, t_text])
+            t_inputs = [pdf, focus, t_ctx, t_use]
+            pdf.change(triage_prompt, t_inputs, [t_prompt, t_text])
+            focus.submit(triage_prompt, t_inputs, [t_prompt, t_text])
+            focus.blur(triage_prompt, t_inputs, [t_prompt, t_text])
+            t_use.change(triage_prompt, t_inputs, [t_prompt, t_text])
             copy_plain.click(None, [t_prompt], copy_status, js=COPY_PLAIN_JS)
             copy_full.click(None, [t_prompt, t_text], copy_status, js=COPY_FULL_JS)
+
+        with gr.Tab("Assistant script"):
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=5):
+                    with gr.Column(elem_classes="t2v-triage t2v-deep"):
+                        gr.HTML(DEEP_INTRO, padding=False)
+                        d_pdf = gr.File(label="The paper (PDF, optional)", file_types=[".pdf"], type="filepath", height=150)
+                        d_length = gr.Radio(list(triage.LENGTHS), value="About 10 minutes", label="How long should it be?")
+                        d_ctx, d_use = context_field()
+                        d_prompt = gr.Textbox(visible=False, value=triage.build_script_prompt("", minutes=10))
+                        d_text = gr.Textbox(visible=False)
+                        with gr.Row(elem_classes="t2v-triage-actions"):
+                            d_copy = gr.Button("Copy script instructions", variant="primary")
+                            d_copy_full = gr.Button("Copy with the paper's text")
+                        d_copy_status = gr.Markdown()
+                        gr.HTML(f'<div class="t2v-links"><span>Then open:</span>{ASSISTANT_LINKS}</div>', padding=False)
+                    script_in = gr.Textbox(label="Paste the script from your assistant", lines=12, max_lines=30,
+                                           placeholder="Paste the assistant's whole answer here, including every part if it continued over several messages.")
+                    script_file = gr.File(label="Or upload the script (.txt or .md)", file_types=[".txt", ".md"],
+                                          type="filepath", height=100)
+                    with gr.Row(elem_classes="t2v-buttons"):
+                        d_go = gr.Button("Read it to me", variant="primary", scale=3)
+                        d_stop = gr.Button("Stop", variant="stop", scale=1)
+                with gr.Column(scale=7):
+                    d_out = listen_panel("Paste the script from your assistant and press <b>Read it to me</b>.")
+            d_inputs = [d_pdf, d_length, d_ctx, d_use]
+            d_pdf.change(deep_prepare, d_inputs, [d_prompt, d_text])
+            d_length.change(deep_prepare, d_inputs, [d_prompt, d_text])
+            d_use.change(deep_prepare, d_inputs, [d_prompt, d_text])
+            d_copy.click(None, [d_prompt], d_copy_status, js=COPY_PLAIN_JS)
+            d_copy_full.click(None, [d_prompt, d_text], d_copy_status, js=COPY_FULL_JS)
+            script_file.change(deep_load_file, script_file, script_in)
+            d_job = d_go.click(run_deep, [script_in, d_pdf, voice, speed, fmt], list(d_out))
+            d_stop.click(stop, None, None, cancels=[d_job])
 
         with gr.Tab("Book"):
             with gr.Row(equal_height=False):
@@ -503,6 +645,17 @@ with gr.Blocks(title="Tex2vois") as demo:
             b_stop.click(stop, None, None, cancels=[b_job])
             listen_to.change(book_listen, [book_file, listen_to, voice, speed], b_player)
             b_build.click(book_download, [book_file, voice, speed], b_file)
+
+    # "About your work": one value, shown on two tabs, kept in this browser.
+    # It is copied across and saved when the person finishes editing (leaves the box or presses Enter).
+    def remember(value):
+        return value, value
+
+    for here, there in ((t_ctx, d_ctx), (d_ctx, t_ctx)):
+        for finished in (here.blur, here.submit):
+            finished(remember, here, [there, saved_context]).then(
+                triage_prompt, t_inputs, [t_prompt, t_text]).then(deep_prepare, d_inputs, [d_prompt, d_text])
+    demo.load(remember, saved_context, [t_ctx, d_ctx]).then(deep_prepare, d_inputs, [d_prompt, d_text])
 
 
 if __name__ == "__main__":

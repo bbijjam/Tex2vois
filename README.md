@@ -90,7 +90,8 @@ chapter at a time, with a manifest on disk so generation can pause and resume.
 | `pipeline.py` | Load → mode → rewrite → speech; timings, captions and cues |
 | `audio.py` | ffmpeg export: loudness normalisation, chapter markers, m4b / mp3 / wav |
 | `player.py` | Caption player and notes pad (HTML + one page script) |
-| `triage.py` | "Should I read this in depth?" instructions for Claude / ChatGPT |
+| `triage.py` | Instructions for Claude / ChatGPT: the read-in-depth verdict and listening scripts of a chosen length |
+| `assistant.py` | Reads a script written by Claude / ChatGPT and checks it against the paper |
 | `app.py` | The web app (Gradio): Article, Paper and Book tabs |
 
 ## Three ways to listen
@@ -106,6 +107,16 @@ ChatGPT (your own account; Tex2vois sends nothing). They ask for a fixed format:
 findings with exact numbers, strength of evidence, limitations, relevance to what you're looking for, and a verdict
 (read in depth / skim the figures and discussion / skip). Copy them alone and attach the PDF, or copy them together
 with the paper's cleaned text and just paste.
+
+**Assistant script.** A separate tab for listening to a paper explained by your own Claude or ChatGPT:
+choose a length (about 5, 10 or 20 minutes, or everything), copy the instructions (optionally with the paper's text),
+let the assistant write the script, paste it back, and listen. Tex2vois tidies the reply (chatter, bullets, tables,
+"continuing" markers), warns if the script stopped early, and, if the paper is added, reports how many of the paper's
+numbers and names made it into the script and lists any that aren't in the paper.
+
+**About your work** is an optional note (for example "I study RNAi-based pest control in soybean") that is added to
+the instructions so the assistant can judge relevance. It is remembered in your browser only, and a "Use it this time"
+switch leaves it out for a single paper.
 
 While listening, the words light up as they are read and the caption box scrolls with the audio (click a
 sentence to jump there). A notes pad sits next to the player: **Mark this moment** adds the time and the

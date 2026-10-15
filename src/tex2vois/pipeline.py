@@ -61,7 +61,9 @@ class Report:
 
 
 def load(source: str | Path, kind: str = "auto", title: str | None = None, max_pages: int | None = None) -> Script:
-    """A PDF path, a .txt/.md path, or raw pasted text."""
+    """A ready Script, a PDF path, a .epub/.txt/.md path, or raw pasted text."""
+    if isinstance(source, Script):
+        return source
     path = Path(source) if isinstance(source, Path) or (len(str(source)) < 1024 and "\n" not in str(source)) else None
     if path is not None and path.suffix.lower() == ".epub":
         script = book.from_epub(path)
