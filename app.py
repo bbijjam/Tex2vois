@@ -14,7 +14,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from tex2vois import book, pipeline, player
+from tex2vois import book, pipeline, player, triage
 from tex2vois.llm import LLM, LLMError
 from tex2vois.tts import DEFAULT_VOICE, Synthesizer
 
@@ -140,6 +140,49 @@ def run_paper(pdf, mode, voice, speed, rewrite, fmt, request: gr.Request, progre
     if pdf is None:
         raise gr.Error("Add a paper first (a PDF file).")
     return _run(Path(pdf), "paper", mode, voice, speed, rewrite, fmt, progress, request.session_hash)
+
+
+def triage_prompt(pdf, focus):
+    """Instructions for Claude / ChatGPT, plus the paper's cleaned text for the 'with text' copy button."""
+    if pdf is None:
+        return "", ""
+    try:
+        script = pipeline.load(Path(pdf), "paper")
+    except (ValueError, RuntimeError) as e:
+        raise gr.Error(f"Sorry, this paper couldn't be read. {e}")
+    body = "\n\n".join(f"{c.title}\n\n" + "\n\n".join(p.text for p in c.paras) for c in script.chapters)
+    return triage.build(script.title, focus), body
+
+
+COPY_PLAIN_JS = r'''(prompt) => {
+  if (!prompt) return 'Add a paper first.';
+  navigator.clipboard.writeText(prompt);
+  return 'Copied. Open Claude or ChatGPT, paste the instructions, and attach the PDF.';
+}'''
+COPY_FULL_JS = r'''(prompt, text) => {
+  if (!prompt) return 'Add a paper first.';
+  const fence = '"' + '"' + '"';
+  const full = prompt.replace('the attached paper', 'the paper text included below')
+    + '\n\nPaper text:\n' + fence + '\n' + text + '\n' + fence;
+  navigator.clipboard.writeText(full);
+  return 'Copied, including the paper. Open Claude or ChatGPT and paste. No need to attach anything.';
+}'''
+TRIAGE_INTRO = """
+<div class="t2v-triage-head">
+  <h3>Should I read this in depth?</h3>
+  <p>Get a quick, structured verdict from Claude or ChatGPT using your own account. Tex2vois only prepares the instructions;
+  nothing is sent from here.</p>
+  <ol>
+    <li>Add the paper above.</li>
+    <li>Optionally, say what you are looking for. It is added to the instructions.</li>
+    <li>Copy the instructions, then open Claude or ChatGPT and paste them.</li>
+    <li>Attach the PDF in the chat, or use the second copy button, which includes the paper's text so you only need to paste.</li>
+  </ol>
+</div>"""
+ASSISTANT_LINKS = "".join(
+    f'<a class="t2v-link-btn" href="{url}" target="_blank" rel="noopener noreferrer">Open {name}</a>'
+    for name, url in triage.ASSISTANTS.items()
+)
 
 
 def stop(request: gr.Request):
@@ -274,6 +317,7 @@ THEME = gr.themes.Base(
     button_primary_background_fill_dark=INK_DARK, button_primary_background_fill_hover_dark=INK_DARK_HOVER,
     button_primary_text_color="#ffffff", button_primary_text_color_dark="#0f1a26",
     button_primary_border_color=INK, button_primary_border_color_dark=INK_DARK,
+    button_border_width="1px", button_border_width_dark="1px",
     button_secondary_background_fill="#ffffff", button_secondary_background_fill_dark="#232325",
     button_secondary_background_fill_hover="#f2f0ec", button_secondary_background_fill_hover_dark="#2c2c2f",
     button_secondary_text_color="#1f1d1a", button_secondary_text_color_dark="#ececea",
@@ -321,6 +365,22 @@ footer { opacity: .5; }
 .t2v-empty strong { color: var(--t2v-text); font-weight: 600; }
 .t2v-buttons button { min-height: 46px; font-size: 1rem !important; font-weight: 600 !important; }
 .t2v-about { font-size: .95rem; }
+
+/* "should I read this in depth?" panel */
+.t2v-triage { margin-top: 18px; padding: 18px 20px !important; background: var(--t2v-surface);
+  border: 1px solid var(--t2v-border); border-radius: 8px; }
+.t2v-triage-head h3 { margin: 0 0 4px; font-size: 1.15rem; font-weight: 600; color: var(--t2v-text); }
+.t2v-triage-head p { margin: 0 0 8px; color: var(--t2v-muted); }
+.t2v-triage-head ol { margin: 0 0 6px 1.2em; padding: 0; color: var(--t2v-text); line-height: 1.6; }
+.t2v-triage-actions { align-items: center !important; gap: 10px !important; }
+.t2v-triage-actions button { min-height: 44px; }
+.t2v-links { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.t2v-links span { color: var(--t2v-muted); margin-right: 4px; }
+.t2v-link-btn { display: inline-flex; align-items: center; height: 44px; padding: 0 16px; border-radius: 6px;
+  border: 1px solid var(--t2v-border); background: var(--t2v-surface); color: var(--t2v-accent) !important;
+  font-weight: 600; text-decoration: none !important; white-space: nowrap; }
+.t2v-link-btn:hover { border-color: var(--t2v-accent); }
+.t2v-link-btn:focus-visible { outline: 2px solid var(--t2v-accent); outline-offset: 2px; }
 
 @media (max-width: 760px) {
   .t2v-header h1 { font-size: 1.5rem; }
@@ -397,6 +457,24 @@ with gr.Blocks(title="Tex2vois") as demo:
                     p_out = listen_panel("Add a paper, choose what you'd like to hear, and press <b>Read it to me</b>.")
             p_job = p_go.click(run_paper, [pdf, mode, voice, speed, p_rewrite, fmt], list(p_out))
             p_stop.click(stop, None, None, cancels=[p_job])
+
+            with gr.Column(elem_classes="t2v-triage"):
+                gr.HTML(TRIAGE_INTRO, padding=False)
+                focus = gr.Textbox(label="What are you looking for? (optional)",
+                                   placeholder="For example: drought tolerance in rice, or better ways to deliver RNAi to insects")
+                t_prompt = gr.Textbox(label="Instructions for the assistant (you can edit them)", lines=12, max_lines=24,
+                                      placeholder="Add a paper above and the instructions will appear here.")
+                t_text = gr.Textbox(visible=False)
+                with gr.Row(elem_classes="t2v-triage-actions"):
+                    copy_plain = gr.Button("Copy instructions", variant="primary")
+                    copy_full = gr.Button("Copy instructions with the paper's text")
+                copy_status = gr.Markdown()
+                gr.HTML(f'<div class="t2v-links"><span>Then open:</span>{ASSISTANT_LINKS}</div>', padding=False)
+            pdf.change(triage_prompt, [pdf, focus], [t_prompt, t_text])
+            focus.submit(triage_prompt, [pdf, focus], [t_prompt, t_text])
+            focus.blur(triage_prompt, [pdf, focus], [t_prompt, t_text])
+            copy_plain.click(None, [t_prompt], copy_status, js=COPY_PLAIN_JS)
+            copy_full.click(None, [t_prompt, t_text], copy_status, js=COPY_FULL_JS)
 
         with gr.Tab("Book"):
             with gr.Row(equal_height=False):

@@ -90,6 +90,7 @@ chapter at a time, with a manifest on disk so generation can pause and resume.
 | `pipeline.py` | Load → mode → rewrite → speech; timings, captions and cues |
 | `audio.py` | ffmpeg export: loudness normalisation, chapter markers, m4b / mp3 / wav |
 | `player.py` | Caption player and notes pad (HTML + one page script) |
+| `triage.py` | "Should I read this in depth?" instructions for Claude / ChatGPT |
 | `app.py` | The web app (Gradio): Article, Paper and Book tabs |
 
 ## Three ways to listen
@@ -99,6 +100,12 @@ chapter at a time, with a manifest on disk so generation can pause and resume.
 | **Article** | pasted text | the whole text, read naturally | no |
 | **Research paper** | PDF | **Summary** (~2 min) → **Skim** (key parts, ~⅙–⅓) → **Full** reading | summary/skim: yes (free); full: no |
 | **Book** | EPUB, plain text (e.g. Project Gutenberg) or PDF | chapter-by-chapter audiobook; listen while the rest is prepared; pause and resume | no |
+
+**Should I read this in depth?** The Research paper tab also prepares ready-to-paste instructions for Claude or
+ChatGPT (your own account; Tex2vois sends nothing). They ask for a fixed format: takeaway, what was done, key
+findings with exact numbers, strength of evidence, limitations, relevance to what you're looking for, and a verdict
+(read in depth / skim the figures and discussion / skip). Copy them alone and attach the PDF, or copy them together
+with the paper's cleaned text and just paste.
 
 While listening, the words light up as they are read and the caption box scrolls with the audio (click a
 sentence to jump there). A notes pad sits next to the player: **Mark this moment** adds the time and the
